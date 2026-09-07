@@ -1,0 +1,112 @@
+networks:
+  cjp:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  n8n_data:
+  waha_sessions:
+  qdrant_data:
+  redis_data:
+  gowa_data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cjp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [cjp]
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cjp-n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE}
+      - N8N_PROXY_HOPS=1
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - TZ=${TZ}
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_RESTRICT_FILE_ACCESS_TO=/data
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./data:/data
+    networks: [cjp]
+
+  gowa:
+    image: aldinokemal2104/go-whatsapp-web-multidevice
+    container_name: cjp-gowa
+    restart: unless-stopped
+    depends_on: [n8n]
+    ports:
+      - "3001:3000"
+    volumes:
+      - gowa_data:/app/storages
+    command:
+      - rest
+      - --basic-auth=${GOWA_BASIC_AUTH:-admin:admin}
+      - --port=3000
+    networks: [cjp]
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: cjp-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks: [cjp]
+
+  redis:
+    image: redis:7-alpine
+    container_name: cjp-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [cjp]
+    profiles: ["cache"]
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: cjp-ngrok
+    restart: unless-stopped
+    depends_on: [n8n]
+    command: ["http", "n8n:5678", "--url=${NGROK_DOMAIN}"]
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    networks: [cjp]
+    profiles: ["tunnel"]
