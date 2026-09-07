@@ -1,11 +1,12 @@
-# Assets à ajouter avant soumission
+# Assets
 
-Ajouter ici :
-- capture du workflow n8n ;
-- capture WhatsApp texte ;
-- capture WhatsApp vocal ;
-- capture d'un graphique ;
-- diagramme d'architecture ;
-- éventuellement `demo.gif` ou miniature vidéo.
+Add final screenshots before submission:
+- architecture.png
+- workflow-n8n.png
+- whatsapp-text-demo.png
+- whatsapp-voice-demo.png
+- whatsapp-chart-demo.jpg
+- security-refusal-demo.png
+- demo.gif
 
-Masquer numéros privés, QR WhatsApp, clés API, tokens et credentials.
+Hide phone numbers, QR codes, tokens and credentials.

@@ -1,8 +1,7 @@
 # Prompts
 
-Les prompts effectifs sont embarqués dans le workflow n8n final.
-
-- `text-to-sql-reference.txt` : copie de référence du code du nœud qui prépare le prompt SQL.
-- `synthesis-reference.txt` : copie de référence du code du nœud de synthèse.
-
-Pour éviter une divergence entre documentation et exécution, le workflow JSON reste la source de vérité.
+The workflow JSON is the source of truth.
+This folder contains reference copies of the logic used to prepare the prompts for:
+- Text-to-SQL
+- business transcription correction
+- manager synthesis

@@ -1,22 +1,7 @@
 # Architecture
 
-## Chaîne principale
-WhatsApp → GOWA → Webhook n8n → normalisation → texte/vocal.
+WhatsApp → GOWA → n8n → text/audio → OpenAI → Text-to-SQL → SQL Guard → PostgreSQL read-only → synthesis → QuickChart → GOWA → WhatsApp.
 
-### Texte
-Question → Text-to-SQL → validation → PostgreSQL read-only → synthèse → WhatsApp.
+The voice branch uses `gpt-4o-mini-transcribe`, followed by a business-vocabulary correction step before Text-to-SQL.
 
-### Vocal
-GOWA media `.ogg` → téléchargement → normalisation MIME → Whisper.
-Si transcription valide, le flux rejoint Text-to-SQL.
-Sinon, l'utilisateur reçoit un message lui demandant de reprendre le vocal ou d'envoyer du texte.
-
-### Graphiques
-La question est inspectée pour détecter une demande explicite de graphique.
-Le LLM de synthèse reçoit `force_chart=true`.
-Si les résultats sont graphiquables, QuickChart produit l'image, n8n la télécharge réellement, puis GOWA l'envoie sur WhatsApp.
-
-## Modèle métier
-Clients 1—N Ventes 1—N Vente_lignes N—1 Produits.
-Fournisseurs 1—N Achats 1—N Achat_lignes N—1 Produits.
-Produits 1—N Mouvements_stock.
+The chart branch separates `force_chart` from the analytical question, generates JPG with QuickChart, downloads it as binary, normalizes it as `image/jpeg`, then sends it through GOWA.

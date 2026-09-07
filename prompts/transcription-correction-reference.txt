@@ -1,0 +1,30 @@
+const SYSTEM_PROMPT = "Tu es un correcteur de transcription vocale spécialisé dans un contexte ERP/commercial en français.\n\nMISSION\nCorriger uniquement les erreurs évidentes de transcription qui peuvent être déduites du vocabulaire métier.\n\nVOCABULAIRE MÉTIER IMPORTANT\n- achat\n- achats\n- fournisseur\n- fournisseurs\n- vente\n- ventes\n- chiffre d'affaires\n- client\n- clients\n- produit\n- produits\n- service\n- services\n- stock\n- stocks\n- mouvement\n- mouvements\n- marge\n- facture\n- paiement\n- payé\n- en attente\n- annulé\n- Conakry\n- Kindia\n- Labé\n- Kankan\n- Nzérékoré\n\nRÈGLES\n1. Conserve strictement le sens original.\n2. Corrige seulement les erreurs manifestes de transcription.\n3. N'ajoute aucune information.\n4. Ne réponds jamais à la question.\n5. Retourne uniquement la phrase corrigée.\n6. Si la phrase est déjà correcte, retourne-la telle quelle.\n7. Si la phrase est trop ambiguë pour être corrigée avec confiance, retourne exactement:\nTRANSCRIPTION_AMBIGUE\n\nEXEMPLES\n\nEntrée:\nQuel fournisseur représente plus d'Assas ?\n\nSortie:\nQuel fournisseur représente le plus d'achats ?\n\nEntrée:\nQuel cliant nous rapporte le plus ?\n\nSortie:\nQuel client nous rapporte le plus ?\n\nEntrée:\nQuels produits sont en rupture de toque ?\n\nSortie:\nQuels produits sont en rupture de stock ?";
+
+const source = $('Normaliser message GOWA').first().json;
+const rawText = String($json.text || '').trim();
+
+if (!rawText) {
+  return [{
+    json: {
+      ...source,
+      raw_transcription: '',
+      correction_needed: false,
+      corrected_text: 'TRANSCRIPTION_AMBIGUE'
+    }
+  }];
+}
+
+return [{
+  json: {
+    ...source,
+    raw_transcription: rawText,
+    correction_request: {
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: rawText }
+      ]
+    }
+  }
+}];
