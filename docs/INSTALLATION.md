@@ -177,10 +177,18 @@ activer les deux workflows.
 3. Configurer l'URL de webhook active :
    `http://n8n:5678/webhook/gowa-db-copilot`.
 4. Copier l'identifiant de session dans `PLUTO_GOWA_SESSION_ID`.
-5. Redémarrer n8n après changement de `.env` :
+5. Recréer n8n après changement de `.env`. Un simple `restart` conserve
+   l'ancien environnement du conteneur :
 
 ```bash
-docker compose restart n8n
+docker compose up -d --force-recreate n8n
+```
+
+La commande suivante automatise la recréation et vérifie la configuration sans
+afficher les valeurs sensibles :
+
+```bash
+./scripts/reload-n8n-environment.sh
 ```
 
 Ne pas employer l'URL `localhost` depuis un conteneur. Les noms internes sont

@@ -211,10 +211,17 @@ sélectionner le workflow superviseur comme gestionnaire d'erreur si nécessaire
 - configurer GOWA pour transmettre les événements au webhook interne actif :
   `http://n8n:5678/webhook/gowa-db-copilot` ;
 - reporter l'identifiant de session dans `PLUTO_GOWA_SESSION_ID` ;
-- redémarrer n8n après toute modification de `.env` :
+- recréer n8n après toute modification de `.env` (`restart` ne recharge pas les
+  variables du conteneur) :
 
 ```bash
-docker compose restart n8n
+docker compose up -d --force-recreate n8n
+```
+
+Pour vérifier en même temps que les variables essentielles sont présentes :
+
+```bash
+./scripts/reload-n8n-environment.sh
 ```
 
 ### 5. Vérifier
