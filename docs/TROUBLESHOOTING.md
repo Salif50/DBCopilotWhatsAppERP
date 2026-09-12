@@ -31,6 +31,34 @@ Sur une instance hébergée où `$env` est volontairement interdit, configurer c
 valeurs par le mécanisme de variables/secrets fourni par l'hébergeur et adapter
 les références du workflow.
 
+## `Mismatching encryption keys`
+
+Le volume `n8n_data` contient une clé différente de `N8N_ENCRYPTION_KEY`. Ne
+supprimez pas le volume : les credentials existants pourraient devenir
+irrécupérables. Le script d'initialisation récupère la clé existante sans
+l'afficher :
+
+```bash
+./scripts/init-env.sh
+docker compose up -d --force-recreate n8n
+```
+
+Ne générez une nouvelle clé que pour une installation réellement neuve.
+Si la clé historique est une ancienne valeur de démonstration, conservez-la pour
+la récupération immédiate puis planifiez une rotation contrôlée des credentials.
+
+## `password authentication failed for user "n8n"`
+
+L'image PostgreSQL utilise `POSTGRES_PASSWORD` uniquement lors de la création
+initiale du volume. Si `.env` change ensuite, exécuter le bootstrap : il
+synchronise désormais le mot de passe du rôle existant avant de relancer n8n.
+
+```bash
+./scripts/bootstrap-docker.sh --demo
+```
+
+Ne supprimez pas le volume PostgreSQL pour résoudre cette erreur.
+
 - `Connection refused ::1:5432`: use `postgres`, not localhost.
 - no output after normalization: `chat_presence` is ignored; wait for `event=message`.
 - audio format error: binary should be `voice.ogg`, `audio/ogg`.

@@ -6,6 +6,7 @@ PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 bash -n scripts/bootstrap-docker.sh
+bash -n scripts/init-env.sh
 bash -n scripts/reload-n8n-environment.sh
 docker compose --env-file .env.example config --quiet
 node scripts/validate-workflows.mjs \

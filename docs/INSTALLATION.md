@@ -27,6 +27,7 @@ git --version
 git clone https://github.com/Salif50/DBCopilotWhatsAppERP.git
 cd DBCopilotWhatsAppERP
 cp .env.example .env
+./scripts/init-env.sh
 ```
 
 Pour un clone SSH :

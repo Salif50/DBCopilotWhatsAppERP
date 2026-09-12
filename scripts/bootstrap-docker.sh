@@ -18,7 +18,7 @@ case "${1:-}" in
 esac
 
 if [[ ! -f .env ]]; then
-  echo "Fichier .env absent. Lancez: cp .env.example .env" >&2
+  echo "Fichier .env absent. Lancez: ./scripts/init-env.sh" >&2
   exit 1
 fi
 
@@ -28,7 +28,7 @@ source .env
 set +a
 
 required=(
-  POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB N8N_ENCRYPTION_KEY
+  POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB
   GOWA_BASIC_AUTH PLUTO_CONTROL_TOKEN DB_COPILOT_DB_PASSWORD
   DB_COPILOT_AUDIT_PASSWORD
 )
@@ -40,6 +40,15 @@ for name in "${required[@]}"; do
     exit 1
   fi
 done
+
+if [[ -z "${N8N_ENCRYPTION_KEY:-}" ]]; then
+  echo "Variable obligatoire absente dans .env: N8N_ENCRYPTION_KEY" >&2
+  exit 1
+fi
+if [[ "$N8N_ENCRYPTION_KEY" == *CHANGE_ME* ]]; then
+  echo "AVERTISSEMENT: la clé n8n historique est faible, mais elle est conservée pour rendre les credentials existants lisibles." >&2
+  echo "Planifiez une rotation contrôlée après la démonstration." >&2
+fi
 
 command -v docker >/dev/null 2>&1 || {
   echo "Docker est requis." >&2
@@ -64,6 +73,16 @@ if [[ "$ready" != true ]]; then
   docker compose logs --tail=100 postgres >&2
   exit 1
 fi
+
+# POSTGRES_PASSWORD n'est appliqué automatiquement par l'image que lors de la
+# toute première initialisation. Sur un volume existant, synchroniser le rôle
+# administrateur avant que n8n retente sa connexion.
+docker compose exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -v admin_user="$POSTGRES_USER" \
+  -v admin_password="$POSTGRES_PASSWORD" <<'SQL'
+SELECT format('ALTER ROLE %I PASSWORD %L', :'admin_user', :'admin_password') \gexec
+SQL
 
 apply_sql() {
   local file="$1"

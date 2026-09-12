@@ -142,7 +142,11 @@ pas exposés publiquement.
 git clone https://github.com/Salif50/DBCopilotWhatsAppERP.git
 cd DBCopilotWhatsAppERP
 cp .env.example .env
+./scripts/init-env.sh
 ```
+
+Si un volume n8n existe déjà, ce script conserve automatiquement sa clé de
+chiffrement afin de ne pas rendre les credentials existants illisibles.
 
 Modifier `.env` et remplacer toutes les valeurs `CHANGE_ME`. Les plus
 importantes sont :

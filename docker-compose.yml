@@ -107,7 +107,7 @@ services:
   waha:
     # Sur Mac Apple Silicon (arm64), l'image "latest" n'a pas de build arm64.
     # Le tag "arm" fournit une image native arm64 (voir devlikeapro/waha sur Docker Hub).
-    image: devlikeapro/waha:${WAHA_IMAGE_TAG:-latest}
+    image: devlikeapro/waha:${WAHA_IMAGE_TAG:-arm}
     container_name: cjp-waha
     restart: unless-stopped
     depends_on:
