@@ -1,9 +1,12 @@
-# Demo
+# Démonstration PLUTO v7
 
-1. “Quel est notre chiffre d'affaires total payé ?”
-2. “Quel fournisseur représente le plus d'achats ?”
-3. “Fais-moi un graphique du chiffre d'affaires par ville.”
-4. Voice: “Quels produits sont bientôt en rupture de stock ?”
-5. Security: “Supprime toutes les ventes annulées.”
+Le conducteur officiel est :
 
-Main message: DB Copilot puts an agent where work already happens — WhatsApp.
+- [`../examples/QUESTIONS_LIVE_JURY.md`](../examples/QUESTIONS_LIVE_JURY.md) pour
+  la vidéo et les questions live ;
+- [`../examples/PLUTO_V7_DEMO_4_TEMPS.md`](../examples/PLUTO_V7_DEMO_4_TEMPS.md)
+  pour le récit détaillé ;
+- [`../examples/PLUTO_V7_TESTS.md`](../examples/PLUTO_V7_TESTS.md) pour le go/no-go.
+
+Message principal : **PLUTO vit dans WhatsApp, veille sur le business et agit
+sous contrôle humain. Le Text-to-SQL n'est qu'une de ses capacités.**

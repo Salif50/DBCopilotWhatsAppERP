@@ -1,0 +1,40 @@
+name: PLUTO validation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install control-plane test dependencies
+        run: |
+          pip install -r services/pluto-control-plane/requirements.txt pytest httpx
+
+      - name: Validate workflows and Compose
+        run: |
+          bash -n scripts/bootstrap-docker.sh
+          node scripts/validate-workflows.mjs \
+            workflows/PLUTO_DB_Copilot_v7_COMPETITION.json \
+            workflows/PLUTO_DB_Copilot_v7_ERROR_SUPERVISOR.json
+          docker compose --env-file .env.example config --quiet
+
+      - name: Test SQL AST control plane
+        env:
+          PYTHONPATH: services/pluto-control-plane
+        run: pytest -q services/pluto-control-plane/test_app.py

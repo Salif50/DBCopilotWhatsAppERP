@@ -1,0 +1,4225 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gowa-db-copilot",
+        "options": {}
+      },
+      "id": "5c5afc74-d723-42bd-9d53-bf916ffefae9",
+      "name": "Webhook GOWA",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        4640
+      ],
+      "webhookId": "b728eea0-cf10-4e19-a15e-2aed2bec7b1c"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const body = item.json.body ?? item.json;\n  if (!body || body.event !== 'message') continue;\n  const p = body.payload ?? {};\n  if (p.is_from_me === true) continue;\n  if (p.is_group === true || String(p.chat_id || '').endsWith('@g.us')) continue;\n\n  const chatId = p.chat_id || p.from || '';\n  if (!chatId) continue;\n  const text = typeof p.body === 'string' ? p.body.trim() : '';\n  let audioPath = null;\n  if (typeof p.audio === 'string' && p.audio.trim()) audioPath = p.audio.trim();\n  else if (p.audio?.path) audioPath = String(p.audio.path).trim();\n  const isAudio = Boolean(audioPath);\n  const unsupported = !text && !isAudio;\n  const inputKind = p.type || (p.image ? 'image' : p.video ? 'vidéo' : p.document ? 'document' : p.sticker ? 'sticker' : 'contenu non reconnu');\n\n  results.push({json:{\n    chat_id:chatId, from:p.from || chatId, from_name:p.from_name || '',\n    session_id:body.session_id || '', device_jid:body.device_id || '',\n    message_id:p.id || p.message_id || '', text, is_audio:isAudio,\n    audio_path:audioPath, timestamp:body.timestamp || null,\n    unsupported_input:unsupported, input_kind:String(inputKind)\n  }});\n}\nreturn results;"
+      },
+      "id": "7fbffcd6-7787-4560-bfc9-232746404305",
+      "name": "Normaliser message GOWA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        4640
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "aaf092c8-9979-42cb-99d8-05245da7bfc1",
+              "leftValue": "={{ $json.is_audio }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cf620d0d-f5a3-4092-a06e-ade5830e91fa",
+      "name": "Message vocal ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -80,
+        4640
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://gowa:3000/' + $json.audio_path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "0dd93e03-2971-41be-b58d-274ea3c79e5f",
+      "name": "Télécharger vocal GOWA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        4416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "gpt-4o-mini-transcribe"
+            },
+            {
+              "name": "language",
+              "value": "fr"
+            },
+            {
+              "name": "response_format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "5cc78a66-3aaa-4fce-b98d-e33f877e8b67",
+      "name": "Whisper - Transcrire vocal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        4416
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Normaliser message GOWA').first().json;\nconst corrected = String($json.corrected_text || '').trim();\n\nif (!corrected || corrected === 'TRANSCRIPTION_AMBIGUE') {\n  throw new Error('Transcription corrigée non exploitable.');\n}\n\nreturn [{\n  json: {\n    ...source,\n    text: corrected,\n    raw_transcription: $json.raw_transcription || '',\n    source_type: 'audio'\n  }\n}];"
+      },
+      "id": "57f42f40-3685-4926-9630-c38aeade7f74",
+      "name": "Préparer transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        4752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const SYSTEM_PROMPT = \"Tu es PLUTO DB Copilot SQL, un moteur Text-to-SQL STRICT pour PostgreSQL 16.\\n\\nOBJECTIF\\nTransformer la question du manager en UNE SEULE requête SQL SELECT correcte, sûre et exécutable à partir des tables métier autorisées.\\n\\nIMPORTANT SUR LES VISUALISATIONS\\nSi la question demande un graphique, un graphe, un histogramme, une courbe, un camembert ou une visualisation:\\n- NE retourne PAS DB_COPILOT_UNSUPPORTED pour cette raison.\\n- Ignore la forme de visualisation.\\n- Génère le SELECT qui fournit les catégories et valeurs nécessaires au graphique.\\n- Le graphique sera construit plus tard par un autre composant.\\n\\nSi la question ne peut réellement pas être répondue à partir de ces tables, retourne exactement:\\nDB_COPILOT_UNSUPPORTED\\n\\nIMPORTANT\\n- Ne réponds jamais à la question métier.\\n- Ne produis jamais d'explication.\\n- Retourne uniquement le SQL brut, ou DB_COPILOT_UNSUPPORTED.\\n- Respecte EXACTEMENT les valeurs métier canoniques ci-dessous.\\n\\nVALEURS MÉTIER CANONIQUES\\n\\nventes.statut:\\n- 'PAYÉ'\\n- 'EN_ATTENTE'\\n- 'ANNULÉ'\\n- 'PARTIEL'\\n\\nachats.statut:\\n- 'COMMANDE'\\n- 'REÇU'\\n- 'ANNULÉ'\\n- 'PARTIEL'\\n\\nproduits.type_item:\\n- 'PRODUIT'\\n- 'SERVICE'\\n\\nmouvements_stock.type_mouvement:\\n- 'ENTREE'\\n- 'SORTIE'\\n- 'AJUSTEMENT_POSITIF'\\n- 'AJUSTEMENT_NEGATIF'\\n\\nNe génère jamais 'payée', 'paye', 'payé' en minuscules, 'en attente', 'annule', etc.\\nUtilise uniquement les valeurs canoniques exactes listées ci-dessus.\\n\\nTABLES AUTORISÉES\\n\\npublic.clients\\n- id_client\\n- code_client\\n- nom\\n- telephone\\n- email\\n- ville\\n- adresse\\n- type_client\\n- nif\\n- actif\\n- date_creation\\n\\npublic.fournisseurs\\n- id_fournisseur\\n- code_fournisseur\\n- nom\\n- telephone\\n- email\\n- ville\\n- pays\\n- adresse\\n- contact_principal\\n- nif\\n- actif\\n- date_creation\\n\\npublic.produits\\n- id_produit\\n- reference\\n- nom\\n- description\\n- categorie\\n- type_item\\n- unite\\n- prix_achat_gnf\\n- prix_vente_gnf\\n- stock_minimum\\n- stock_gere\\n- actif\\n- date_creation\\n\\npublic.ventes\\n- id_vente\\n- numero_vente\\n- id_client\\n- date_vente\\n- statut\\n- mode_paiement\\n- montant_total_gnf\\n- montant_paye_gnf\\n- commentaire\\n- date_creation\\n\\npublic.vente_lignes\\n- id_ligne_vente\\n- id_vente\\n- id_produit\\n- quantite\\n- prix_unitaire_gnf\\n- remise_gnf\\n- total_ligne_gnf\\n\\npublic.achats\\n- id_achat\\n- numero_achat\\n- id_fournisseur\\n- date_achat\\n- statut\\n- montant_total_gnf\\n- commentaire\\n- date_creation\\n\\npublic.achat_lignes\\n- id_ligne_achat\\n- id_achat\\n- id_produit\\n- quantite\\n- prix_unitaire_gnf\\n- total_ligne_gnf\\n\\npublic.mouvements_stock\\n- id_mouvement\\n- id_produit\\n- type_mouvement\\n- quantite\\n- id_vente\\n- id_achat\\n- motif\\n- date_mouvement\\n- commentaire\\n\\npublic.v_stock_produits\\n- id_produit\\n- reference\\n- nom\\n- categorie\\n- stock_minimum\\n- stock_actuel\\n\\nRELATIONS AUTORISÉES\\n- ventes.id_client = clients.id_client\\n- vente_lignes.id_vente = ventes.id_vente\\n- vente_lignes.id_produit = produits.id_produit\\n- achats.id_fournisseur = fournisseurs.id_fournisseur\\n- achat_lignes.id_achat = achats.id_achat\\n- achat_lignes.id_produit = produits.id_produit\\n- mouvements_stock.id_produit = produits.id_produit\\n- mouvements_stock.id_vente = ventes.id_vente\\n- mouvements_stock.id_achat = achats.id_achat\\n- v_stock_produits.id_produit = produits.id_produit\\n\\nRÈGLES DE SÉCURITÉ\\n1. SELECT uniquement.\\n2. Une seule instruction.\\n3. Aucun point-virgule.\\n4. Interdiction de INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, GRANT, REVOKE, COPY, CALL, DO, EXECUTE, MERGE, SET, RESET, VACUUM, ANALYZE, COMMENT.\\n5. Pas de WITH.\\n6. Pas de UNION, INTERSECT ou EXCEPT.\\n7. Pas de pg_catalog ou information_schema.\\n8. Pas de pg_sleep, dblink, lo_import, lo_export, set_config, pg_read_file, pg_ls_dir.\\n9. Utilise uniquement les tables/vues autorisées.\\n10. Les JOIN sont autorisés uniquement avec les relations listées.\\n11. N'invente aucune colonne.\\n12. Pour une liste détaillée, LIMIT 100 maximum.\\n13. N'expose pas téléphone, email, adresse ou NIF sauf demande explicite.\\n\\nRÈGLES MÉTIER\\n1. \\\"chiffre d'affaires\\\" = ventes avec statut = 'PAYÉ', sauf demande contraire.\\n2. \\\"encaissé\\\" = SUM(montant_paye_gnf).\\n3. \\\"facturé\\\" = SUM(montant_total_gnf).\\n4. Pour analyser produits/services vendus: ventes -> vente_lignes -> produits.\\n5. Pour analyser clients: ventes -> clients.\\n6. Pour achats fournisseurs: achats -> fournisseurs.\\n7. Pour produits achetés: achats -> achat_lignes -> produits.\\n8. Pour le stock actuel, utilise de préférence public.v_stock_produits.\\n9. Pour une marge approximative:\\n   SUM(vente_lignes.total_ligne_gnf) - SUM(vente_lignes.quantite * COALESCE(produits.prix_achat_gnf,0))\\n10. Utilise COALESCE pour SUM si pertinent.\\n\\nDATES\\n\\\"ce mois-ci\\\":\\ndate >= date_trunc('month', CURRENT_DATE)\\nAND date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'\\n\\n\\\"le mois dernier\\\":\\ndate >= date_trunc('month', CURRENT_DATE) - INTERVAL '1 month'\\nAND date < date_trunc('month', CURRENT_DATE)\\n\\n\\\"aujourd'hui\\\":\\ndate >= CURRENT_DATE\\nAND date < CURRENT_DATE + INTERVAL '1 day'\\n\\nEXEMPLES\\n\\nQuestion: Classe les clients par chiffre d'affaires décroissant\\nRéponse:\\nSELECT c.id_client, c.nom, COALESCE(SUM(v.montant_paye_gnf), 0) AS chiffre_affaires_gnf FROM public.clients c LEFT JOIN public.ventes v ON c.id_client = v.id_client AND v.statut = 'PAYÉ' GROUP BY c.id_client, c.nom ORDER BY chiffre_affaires_gnf DESC LIMIT 100\\n\\nQuestion: Fais-moi un graphique du chiffre d'affaires par ville\\nRéponse:\\nSELECT c.ville, COALESCE(SUM(v.montant_paye_gnf), 0) AS chiffre_affaires_gnf FROM public.ventes v JOIN public.clients c ON c.id_client = v.id_client WHERE v.statut = 'PAYÉ' GROUP BY c.ville ORDER BY chiffre_affaires_gnf DESC\\n\\nQuestion: Quels produits sont bientôt en rupture ?\\nRéponse:\\nSELECT reference, nom, stock_actuel, stock_minimum FROM public.v_stock_produits WHERE stock_actuel <= stock_minimum ORDER BY stock_actuel ASC LIMIT 100\";\n\nconst originalQuestion = String($json.text || '').trim();\nconst questionForSql = String($json.resolved_question || originalQuestion).trim();\n\nif (!originalQuestion) {\n  throw new Error('Question vide.');\n}\n\nconst chartRegex = /\\b(graphique|graphe|chart|diagramme|courbe|histogramme|camembert|visualise|visualiser|visualisation)\\b/i;\nconst forceChart = chartRegex.test(originalQuestion);\n\nlet analyticalQuestion = questionForSql\n  .replace(/\\b(fais|fait|génère|genere|crée|cree|montre|affiche)[- ]moi\\b/gi, ' ')\n  .replace(/\\b(un|une|le|la|du|des)\\s+(graphique|graphe|chart|diagramme|courbe|histogramme|camembert|visualisation)\\b/gi, ' ')\n  .replace(/\\b(graphique|graphe|chart|diagramme|courbe|histogramme|camembert|visualise|visualiser|visualisation)\\b/gi, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (analyticalQuestion.length < 3) {\n  analyticalQuestion = originalQuestion;\n}\n\nconst userPrompt = [\n  'QUESTION MÉTIER À TRADUIRE EN SQL:',\n  analyticalQuestion,\n  '',\n  'IMPORTANT:',\n  '- La demande originale peut contenir une demande de graphique.',\n  '- Une demande de graphique n’est JAMAIS une raison de retourner DB_COPILOT_UNSUPPORTED.',\n  '- Ignore uniquement la forme de visualisation.',\n  '- Génère le SELECT nécessaire pour récupérer les données métier.',\n  '- Le graphique sera construit par un autre composant.'\n].join('\\n');\n\nreturn [{\n  json: {\n    ...$json,\n    original_question: originalQuestion,\n    analytical_question: analyticalQuestion,\n    force_chart: forceChart,\n    sql_llm_body: {\n      model: 'gpt-4o-mini',\n      temperature: 0,\n      messages: [\n        {\n          role: 'system',\n          content: SYSTEM_PROMPT\n        },\n        {\n          role: 'user',\n          content: userPrompt\n        }\n      ]\n    }\n  }\n}];\n"
+      },
+      "id": "923dfe72-8b05-4f5a-8312-a6c42d2569e8",
+      "name": "Préparer Text-to-SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        4640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.sql_llm_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "623b3a57-bf83-4d14-9393-57408f5b6fa2",
+      "name": "GPT Text-to-SQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1088,
+        4880
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = {...$('Préparer Text-to-SQL').first().json, sql_retry_count:Number($json.sql_retry_count||0)};\n\nlet sql = $json?.choices?.[0]?.message?.content;\n\nif (typeof sql !== 'string') {\n  return [{\n    json: {\n      ...source,\n      sql_valid: false,\n      sql_error: 'Le modèle IA n’a pas retourné une requête SQL exploitable.'\n    }\n  }];\n}\n\nsql = sql.trim()\n  .replace(/^```sql\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/```$/i, '')\n  .trim();\n\nif (sql === 'DB_COPILOT_UNSUPPORTED') {\n  return [{\n    json: {\n      ...source,\n      sql_valid: false,\n      unsupported: true,\n      sql_error: 'La question ne peut pas être traitée avec les données métier autorisées.'\n    }\n  }];\n}\n\n// Normalisation défensive de quelques valeurs métier fréquemment mal générées par un LLM.\nsql = sql\n  .replace(/'payée'/gi, \"'PAYÉ'\")\n  .replace(/'paye'/gi, \"'PAYÉ'\")\n  .replace(/'payé'/gi, \"'PAYÉ'\")\n  .replace(/'en[\\s_-]*attente'/gi, \"'EN_ATTENTE'\")\n  .replace(/'annulee?'/gi, \"'ANNULÉ'\")\n  .replace(/'annulé[e]?'/gi, \"'ANNULÉ'\")\n  .replace(/'partiel(le)?'/gi, \"'PARTIEL'\")\n  .replace(/'recu'/gi, \"'REÇU'\")\n  .replace(/'reçu'/gi, \"'REÇU'\")\n  .replace(/'commande'/gi, \"'COMMANDE'\")\n  .replace(/'produit'/gi, \"'PRODUIT'\")\n  .replace(/'service'/gi, \"'SERVICE'\")\n  .replace(/'entree'/gi, \"'ENTREE'\")\n  .replace(/'entrée'/gi, \"'ENTREE'\")\n  .replace(/'sortie'/gi, \"'SORTIE'\");\n\nconst fail = (message) => [{\n  json: {\n    ...source,\n    generated_sql: sql,\n    sql_valid: false,\n    sql_error: message\n  }\n}];\n\nif (!/^SELECT\\b/i.test(sql))\n  return fail('Sécurité : seules les requêtes SELECT sont autorisées.');\n\nif (sql.includes(';'))\n  return fail('Sécurité : point-virgule ou instructions multiples interdits.');\n\nif (/--|\\/\\*|\\*\\//.test(sql))\n  return fail('Sécurité : commentaires SQL interdits.');\n\nif (/\\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|CALL|DO|EXECUTE|MERGE|SET|RESET|VACUUM|ANALYZE|COMMENT|WITH|UNION|INTERSECT|EXCEPT)\\b/i.test(sql))\n  return fail('Sécurité : opération ou construction SQL non autorisée.');\n\nif (/\\b(PG_SLEEP|DBLINK|LO_IMPORT|LO_EXPORT|SET_CONFIG|PG_READ_FILE|PG_LS_DIR|PG_CATALOG|INFORMATION_SCHEMA)\\b/i.test(sql))\n  return fail('Sécurité : fonction ou schéma système interdit.');\n\nconst allowed = new Set([\n  'clients',\n  'fournisseurs',\n  'produits',\n  'ventes',\n  'vente_lignes',\n  'achats',\n  'achat_lignes',\n  'mouvements_stock',\n  'v_stock_produits'\n]);\n\nconst refs = [];\nfor (const m of sql.matchAll(/\\b(?:FROM|JOIN)\\s+((?:\"?public\"?\\.)?\"?[a-zA-Z_][a-zA-Z0-9_]*\"?)/gi)) {\n  let t = m[1].replace(/\"/g, '').toLowerCase();\n  if (t.startsWith('public.')) t = t.substring(7);\n  refs.push(t);\n}\n\nif (!refs.length)\n  return fail('Sécurité : aucune table métier autorisée détectée.');\n\nfor (const t of refs) {\n  if (!allowed.has(t))\n    return fail(`Sécurité : table non autorisée (${t}).`);\n}\n\n// Pas de SELECT imbriqué dans cette version hackathon.\nconst selectCount = (sql.match(/\\bSELECT\\b/gi) || []).length;\nif (selectCount !== 1)\n  return fail('Sécurité : les sous-requêtes ne sont pas autorisées dans cette version.');\n\nconst safeSql = `SELECT * FROM (${sql}) AS db_copilot_result LIMIT 200`;\n\nreturn [{\n  json: {\n    ...source,\n    generated_sql: sql,\n    safe_sql: safeSql,\n    sql_valid: true,\n    unsupported: false\n  }\n}];"
+      },
+      "id": "9eaf4575-1fd6-4548-aef0-915d92e6577f",
+      "name": "Valider et sécuriser SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        4768
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4dd1a22f-a3af-4dd8-95c1-59e88eeea1d6",
+              "leftValue": "={{ $json.sql_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "976a2a9c-7a8a-4c99-98c1-8c1f31b7495e",
+      "name": "SQL autorisé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1632,
+        4640
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.safe_sql }}",
+        "options": {}
+      },
+      "id": "e50f5cb5-11fc-467b-a736-39280298230a",
+      "name": "PostgreSQL - ventes READ ONLY",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1872,
+        4528
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Après import, sélectionne ici la credential PostgreSQL utilisant le compte db_copilot_ro (Host postgres, port 5432)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Valider et sécuriser SQL').first().json;\nconst rawRows = $input.all().map(item => item.json);\nconst rows = rawRows.filter(r => r && Object.keys(r).length > 0);\n\nreturn [{\n  json: {\n    chat_id: meta.chat_id,\n    session_id: meta.session_id,\n    device_jid: meta.device_jid,\n    from_name: meta.from_name,\n    question: meta.original_question || meta.text,\n    analytical_question: meta.analytical_question || meta.text,\n    force_chart: meta.force_chart === true,\n    sql: meta.generated_sql,\n    rows,\n    row_count: rows.length\n  }\n}];"
+      },
+      "id": "31d854de-4759-4d66-a516-4ab4ffc26b13",
+      "name": "Collecter résultats SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        4528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const SYSTEM_PROMPT = \"\\nTu es PLUTO DB Copilot WhatsApp, un analyste business senior pour un manager en Guinée.\\n\\nIMPORTANT JSON\\nTa réponse finale doit être UNIQUEMENT un objet JSON valide.\\nLe mot JSON est volontairement présent ici car l'API utilise response_format=json_object.\\nNe retourne aucun texte avant ou après le JSON.\\nNe retourne aucun Markdown ni bloc ```json.\\n\\nENTRÉES\\nTu reçois:\\n- question: question originale;\\n- sql: SQL exécuté;\\n- resultats: tableau JSON PostgreSQL;\\n- row_count: nombre de lignes;\\n- force_chart: true si l'utilisateur demande explicitement un graphique.\\n\\nMISSION\\nTransformer les données en réponse WhatsApp concise, exacte et utile.\\n\\nRÈGLES\\n1. Réponds en français.\\n2. N'invente jamais une donnée absente des résultats.\\n3. Ne montre pas le SQL sauf demande explicite.\\n4. Montants: séparateurs de milliers avec espaces + suffixe GNF.\\n5. Utilise le gras WhatsApp avec *texte*.\\n6. Quelques emojis utiles seulement.\\n7. Pour un KPI simple: 2 à 5 lignes.\\n8. Pour un classement: présente les principaux résultats.\\n9. Si row_count=0 ou resultats=[], dis clairement qu'aucune donnée correspondante n'a été trouvée. Ne fabrique rien.\\n10. Si force_chart=true ET au moins deux valeurs comparables existent, chart DOIT être non-null. C'est une obligation stricte.\\n11. Si force_chart=true mais qu'il n'existe pas au moins deux valeurs comparables, explique brièvement pourquoi et mets chart=null.\\n12. Si force_chart=false, mets chart uniquement si cela améliore réellement la compréhension.\\n13. Série temporelle: line.\\n14. Comparaison clients/produits/services/villes/fournisseurs: bar.\\n15. Répartition simple: pie ou doughnut.\\n16. Maximum 12 points.\\n17. labels et values doivent avoir la même longueur.\\n18. values contient uniquement des nombres finis.\\n19. Ne mets jamais l'URL QuickChart dans message.\\n\\nFORMAT JSON OBLIGATOIRE SANS GRAPHIQUE\\n{\\n  \\\"message\\\": \\\"réponse WhatsApp\\\",\\n  \\\"chart\\\": null\\n}\\n\\nFORMAT JSON OBLIGATOIRE AVEC GRAPHIQUE\\n{\\n  \\\"message\\\": \\\"réponse WhatsApp\\\",\\n  \\\"chart\\\": {\\n    \\\"type\\\": \\\"bar\\\",\\n    \\\"title\\\": \\\"Titre court\\\",\\n    \\\"labels\\\": [\\\"A\\\", \\\"B\\\"],\\n    \\\"values\\\": [10, 20],\\n    \\\"dataset_label\\\": \\\"Libellé\\\"\\n  }\\n}\\n\";\n\nconst input = {\n  question: $json.question,\n  sql: $json.sql,\n  resultats: $json.rows,\n  row_count: $json.row_count,\n  force_chart: $json.force_chart === true\n};\n\nreturn [{\n  json: {\n    ...$json,\n    synthesis_llm_body: {\n      model: 'gpt-4o-mini',\n      temperature: 0.2,\n      response_format: { type: 'json_object' },\n      messages: [\n        {\n          role: 'system',\n          content: SYSTEM_PROMPT\n        },\n        {\n          role: 'user',\n          content: 'Réponds uniquement en JSON valide. Données à analyser: ' + JSON.stringify(input)\n        }\n      ]\n    }\n  }\n}];"
+      },
+      "id": "a5d8b3a1-d0ba-491a-a7ab-17e99b443a58",
+      "name": "Préparer synthèse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2368,
+        4528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.synthesis_llm_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "bcaf0be1-fd3f-4cf5-bacf-7ffa38a3e630",
+      "name": "GPT Synthèse manager",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2608,
+        4528
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst meta = $('Préparer synthèse').first().json;\nconst raw = $json?.choices?.[0]?.message?.content;\n\nlet parsed = null;\ntry { parsed = JSON.parse(String(raw || '').trim()); }\ncatch (e) {\n  parsed = { message: meta.row_count === 0\n      ? '📊 Aucune donnée correspondante n’a été trouvée pour cette demande.'\n      : '📊 Les données ont été récupérées, mais je n’ai pas pu formater la réponse. Reformulez votre question si besoin.',\n    chart: null };\n}\n\nlet message = String(parsed?.message || '').trim();\nif (!message) {\n  message = meta.row_count === 0\n    ? '📊 Aucune donnée correspondante n’a été trouvée pour cette demande.'\n    : '📊 Analyse terminée.';\n}\n\nfunction quickchart(config){\n  return 'https://quickchart.io/chart?width=1000&height=600&format=jpg&backgroundColor=white&devicePixelRatio=1&c=' + encodeURIComponent(JSON.stringify(config));\n}\n\nlet chartUrl = null;\nconst chart = parsed?.chart;\nif (chart && Array.isArray(chart.labels) && Array.isArray(chart.values)) {\n  const labels = chart.labels.slice(0, 12).map(v => String(v));\n  const values = chart.values.slice(0, 12).map(Number);\n  if (labels.length >= 2 && labels.length === values.length && values.every(Number.isFinite)) {\n    const allowedTypes = ['bar','line','pie','doughnut'];\n    const type = allowedTypes.includes(chart.type) ? chart.type : 'bar';\n    chartUrl = quickchart({ type, data:{ labels, datasets:[{ label: chart.dataset_label || 'Valeur', data: values }] },\n      options:{ responsive:true, plugins:{ title:{ display:true, text: chart.title || 'PLUTO DB Copilot' }, legend:{ display:true } } } });\n  }\n}\n\n// Secours : graphique demandé mais non fourni -> on le construit depuis les lignes\nif (!chartUrl && meta.force_chart === true && Array.isArray(meta.rows) && meta.rows.length >= 2) {\n  const rows = meta.rows;\n  const keys = Object.keys(rows[0] || {});\n  const isNum = (v) => v !== null && v !== '' && Number.isFinite(Number(v));\n  const valueKey = keys.find(k => rows.some(r => isNum(r[k])) && rows.every(r => r[k] === null || isNum(r[k])));\n  const labelKey = keys.find(k => k !== valueKey);\n  if (valueKey && labelKey) {\n    const labels = rows.slice(0,12).map(r => String(r[labelKey]));\n    const values = rows.slice(0,12).map(r => Number(r[valueKey]) || 0);\n    chartUrl = quickchart({ type:'bar', data:{ labels, datasets:[{ label: valueKey, data: values }] },\n      options:{ responsive:true, plugins:{ title:{ display:true, text:'PLUTO DB Copilot' }, legend:{ display:true } } } });\n  }\n}\n\nif (meta.force_chart === true && !chartUrl && meta.row_count >= 2) {\n  message += '\\n\\n⚠️ Je n’ai pas pu générer une visualisation fiable avec ces résultats.';\n}\n\nreturn [{ json: {\n  chat_id: meta.chat_id, session_id: meta.session_id, device_jid: meta.device_jid,\n  message, chart_url: chartUrl, has_chart: !!chartUrl, chart_error: null\n} }];\n"
+      },
+      "id": "66d00fe1-35a8-419f-9964-396a34828ba1",
+      "name": "Construire réponse et graphique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2848,
+        4528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "4d949e72-801b-4c3a-8b47-3a45730fa38d",
+      "name": "Envoyer réponse WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3104,
+        4528
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "414f26bf-a95d-4e78-bdd3-c3d88b3e4409",
+              "leftValue": "={{ $('Construire réponse et graphique').first().json.has_chart }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2ead2880-f1d5-4cda-b328-9f1329e6de12",
+      "name": "Graphique disponible ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3344,
+        4528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nlet message;\nif (j.unsupported) {\n  message =\n    '🤖 *Je n\\'ai pas bien compris votre demande.*\\n\\n' +\n    'Pouvez-vous la préciser ? Par exemple :\\n' +\n    '• « Quels sont mes 5 produits les plus vendus ce mois-ci ? »\\n' +\n    '• « Quel est le total de mes achats ce mois ? »\\n' +\n    '• « Quelles factures ne sont pas encore payées ? »\\n\\n' +\n    'Je peux analyser : ventes, clients, produits, stock, fournisseurs, achats et paiements — et faire des *graphiques*.';\n} else {\n  message =\n    '🔒 *Demande non traitée pour raison de sécurité.*\\n\\n' +\n    'Reformulez simplement votre question (ex. « chiffre d\\'affaires de ce mois », « top 5 clients »).';\n}\nreturn [{ json: { chat_id: j.chat_id, session_id: j.session_id, device_jid: j.device_jid, message } }];\n"
+      },
+      "id": "1dc2c1f7-6013-446c-ab10-746b908d4625",
+      "name": "Préparer refus sécurisé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1872,
+        4816
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "d49bc8a7-b8fb-4ab2-a5c7-e6c6efe4b4e3",
+      "name": "Envoyer refus WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2128,
+        4816
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Construire réponse et graphique').first().json.chart_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "bae2a1bf-7339-4755-8bfe-48bc4bb22ccb",
+      "name": "Télécharger graphique QuickChart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3584,
+        4416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/image",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $('Construire réponse et graphique').first().json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phone",
+              "value": "={{ $('Construire réponse et graphique').first().json.chat_id }}"
+            },
+            {
+              "name": "caption",
+              "value": "📊 PLUTO DB Copilot — visualisation des données"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "image",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "7229b9cd-11fd-4ff8-81e4-eeda842e02c5",
+      "name": "Envoyer graphique WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3936,
+        4416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfor (const item of items) {\n  if (!item.binary?.data) {\n    throw new Error('Aucun fichier audio binaire reçu depuis GOWA.');\n  }\n\n  item.binary.data.fileName = 'voice.ogg';\n  item.binary.data.mimeType = 'audio/ogg';\n  item.binary.data.fileExtension = 'ogg';\n}\n\nreturn items;"
+      },
+      "id": "a72b06e3-78b2-46db-a194-b9fb4de89689",
+      "name": "Préparer fichier audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        4416
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1248ef29-95ae-492d-af3a-e9f4c3bcf757",
+              "leftValue": "={{ !!($json.text && String($json.text).trim().length >= 2) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f7b8e48e-3e84-4810-af76-95baa0ccebf5",
+      "name": "Transcription valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        4416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Normaliser message GOWA').first().json;\nreturn [{json:{...src,technical_error:String($json?.error?.message || '').slice(0,900),error_origin:'pipeline audio',message:[\n  '🎙️ *Je n’ai pas pu traiter ce vocal.*',\n  '',\n  'Le fichier peut être incomplet, trop bruité ou le service de transcription peut être momentanément indisponible.',\n  'Renvoyez un vocal court et clair, ou écrivez directement votre question. Aucune action n’a été exécutée.'\n].join('\\n')}}];"
+      },
+      "id": "71d8f09d-cbcc-42c5-837b-c39807566caf",
+      "name": "Préparer erreur audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        4560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "8196b222-e74f-4362-80a7-b2aebefcb7b2",
+      "name": "Envoyer erreur audio WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        4560
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfor (const item of items) {\n  if (!item.binary?.data) {\n    throw new Error('Aucune image reçue depuis QuickChart.');\n  }\n\n  item.binary.data.fileName = 'db-copilot-chart.jpg';\n  item.binary.data.mimeType = 'image/jpeg';\n  item.binary.data.fileExtension = 'jpg';\n}\n\nreturn items;"
+      },
+      "id": "841017df-3a44-4de6-807a-10c7290ef10a",
+      "name": "Préparer image graphique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3696,
+        4416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const SYSTEM_PROMPT = \"Tu es un correcteur de transcription vocale spécialisé dans un contexte ERP/commercial en français.\\n\\nMISSION\\nCorriger uniquement les erreurs évidentes de transcription qui peuvent être déduites du vocabulaire métier.\\n\\nVOCABULAIRE MÉTIER IMPORTANT\\n- achat\\n- achats\\n- fournisseur\\n- fournisseurs\\n- vente\\n- ventes\\n- chiffre d'affaires\\n- client\\n- clients\\n- produit\\n- produits\\n- service\\n- services\\n- stock\\n- stocks\\n- mouvement\\n- mouvements\\n- marge\\n- facture\\n- paiement\\n- payé\\n- en attente\\n- annulé\\n- Conakry\\n- Kindia\\n- Labé\\n- Kankan\\n- Nzérékoré\\n\\nRÈGLES\\n1. Conserve strictement le sens original.\\n2. Corrige seulement les erreurs manifestes de transcription.\\n3. N'ajoute aucune information.\\n4. Ne réponds jamais à la question.\\n5. Retourne uniquement la phrase corrigée.\\n6. Si la phrase est déjà correcte, retourne-la telle quelle.\\n7. Si la phrase est trop ambiguë pour être corrigée avec confiance, retourne exactement:\\nTRANSCRIPTION_AMBIGUE\\n\\nEXEMPLES\\n\\nEntrée:\\nQuel fournisseur représente plus d'Assas ?\\n\\nSortie:\\nQuel fournisseur représente le plus d'achats ?\\n\\nEntrée:\\nQuel cliant nous rapporte le plus ?\\n\\nSortie:\\nQuel client nous rapporte le plus ?\\n\\nEntrée:\\nQuels produits sont en rupture de toque ?\\n\\nSortie:\\nQuels produits sont en rupture de stock ?\";\n\nconst source = $('Normaliser message GOWA').first().json;\nconst rawText = String($json.text || '').trim();\n\nif (!rawText) {\n  return [{\n    json: {\n      ...source,\n      raw_transcription: '',\n      correction_needed: false,\n      corrected_text: 'TRANSCRIPTION_AMBIGUE'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...source,\n    raw_transcription: rawText,\n    correction_request: {\n      model: 'gpt-4o-mini',\n      temperature: 0,\n      messages: [\n        { role: 'system', content: SYSTEM_PROMPT },\n        { role: 'user', content: rawText }\n      ]\n    }\n  }\n}];"
+      },
+      "id": "2a5bdc20-e2a2-48ae-9cb3-20834053014d",
+      "name": "Préparer correction transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        4416
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.correction_request }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "ccd5fe05-8991-4ea3-912f-88527f280830",
+      "name": "GPT Corriger transcription métier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        4288
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Préparer correction transcription').first().json;\nlet corrected = $json?.choices?.[0]?.message?.content;\n\ncorrected = typeof corrected === 'string' ? corrected.trim() : '';\n\nreturn [{\n  json: {\n    ...source,\n    corrected_text: corrected || 'TRANSCRIPTION_AMBIGUE'\n  }\n}];"
+      },
+      "id": "660ec4f1-8f79-4215-b4b8-c576a14bf2ff",
+      "name": "Appliquer transcription corrigée",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        4416
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "49a38600-9266-49eb-9951-513a0a98d504",
+              "leftValue": "={{ $json.corrected_text !== 'TRANSCRIPTION_AMBIGUE' && String($json.corrected_text || '').trim().length >= 3 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a9b9b5be-ee23-4be1-9541-01d5ec460194",
+      "name": "Transcription corrigée exploitable ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1712,
+        4416
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "3fdc143e-2a8d-410b-9e21-a439f341b710",
+      "name": "Cron Surveillance",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        5824
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const digits = value => String(value || '').replace(/[^0-9]/g, '');\nconst manager = digits($env.PLUTO_MANAGER_CHAT_ID || '');\nconst session = String($env.PLUTO_GOWA_SESSION_ID || '').trim();\nconst raw = Number($env.PLUTO_SALES_DROP_THRESHOLD || 0.15);\nconst pct = Math.abs(raw <= 1 ? raw * 100 : raw);\nreturn [{json:{\n  SEUIL_BAISSE_PCT:-pct, MANAGER_PHONE:manager, SESSION_ID:session,\n  demo_mode:false, supervision_configured:Boolean(manager && session)\n}}];"
+      },
+      "id": "a887aa31-8d38-4896-963e-54b76a207a37",
+      "name": "Paramètres surveillance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        5824
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT SUM(CASE WHEN date_vente >= CURRENT_DATE - INTERVAL '7 days' THEN montant_total_gnf ELSE 0 END) AS ventes_semaine, SUM(CASE WHEN date_vente >= CURRENT_DATE - INTERVAL '14 days' AND date_vente < CURRENT_DATE - INTERVAL '7 days' THEN montant_total_gnf ELSE 0 END) AS ventes_semaine_prec, COUNT(*) FILTER (WHERE date_vente >= CURRENT_DATE - INTERVAL '7 days') AS nb_ventes_semaine FROM ventes WHERE statut <> 'ANNULÉ' AND date_vente >= CURRENT_DATE - INTERVAL '14 days'",
+        "options": {}
+      },
+      "id": "e8faa201-c486-49d6-9622-d9635004f96f",
+      "name": "Scan ventes (RO)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1200,
+        5824
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let cfg;\ntry { const demo = $('Préparer démo contrôlée').first().json; if (demo.demo_mode) cfg = demo; } catch(e) {}\nif (!cfg) cfg = $('Paramètres surveillance').first().json;\nconst r = $json;\nconst cur = Number(r.ventes_semaine) || 0;\nconst prev = Number(r.ventes_semaine_prec) || 0;\nconst variation = prev > 0 ? Math.round(((cur-prev)/prev)*1000)/10 : 0;\nconst actual = prev > 0 && variation <= cfg.SEUIL_BAISSE_PCT;\nreturn [{json:{...cfg,ventes_semaine:cur,ventes_semaine_prec:prev,\n  nb_ventes_semaine:Number(r.nb_ventes_semaine)||0,variation_pct:variation,\n  anomalie:Boolean(actual || cfg.demo_mode),actual_anomaly:actual,\n  demo_notice:cfg.demo_mode ? 'Simulation contrôlée déclenchée par le manager; les chiffres restent ceux de la base.' : null\n}}];"
+      },
+      "id": "535e5d17-c0c9-4e03-86b9-bdd0b8325ba7",
+      "name": "Évaluer seuil",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        5824
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "10bcea60-3c8a-4ae4-bb9f-d881dd14e8c1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.anomalie }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "936f000d-ceae-4344-af83-42ce57516f95",
+      "name": "Anomalie ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        5824
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "9e9ac482-6696-40a8-acca-139a874afb43",
+      "name": "Fin normale sans anomalie ventes",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        5984
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst j = $json;\nconst SYS = [\n'Tu es l\\'agent d\\'INVESTIGATION de PLUTO DB Copilot (PostgreSQL 16).',\n'On te signale une anomalie de ventes. Propose un diagnostic structuré.',\n'Retourne UNIQUEMENT du JSON: {\"hypotheses\":[\"..\"],\"requetes\":[\"SELECT ..\"]}',\n'REGLES SQL STRICTES pour chaque requete:',\n'- SELECT unique, PAS de point-virgule, PAS de commentaire, PAS de WITH, PAS de UNION.',\n'- Uniquement ces tables: clients, fournisseurs, produits, ventes, vente_lignes, achats, achat_lignes, mouvements_stock, v_stock_produits.',\n'- Colonnes ventes: id_vente,id_client,date_vente,statut,montant_total_gnf,montant_paye_gnf. Statut: PAYÉ,EN_ATTENTE,ANNULÉ,PARTIEL.',\n'- Jointures: vente_lignes.id_vente=ventes.id_vente, vente_lignes.id_produit=produits.id_produit, ventes.id_client=clients.id_client.',\n'- v_stock_produits(id_produit,nom,stock_minimum,stock_actuel) pour les ruptures.',\n'- Max 3 requetes, chacune ciblant une hypothese (produit, client, statut/annulations, stock/rupture).',\n'- Compare 7 derniers jours vs 7 jours precedents avec CASE WHEN sur date_vente.'\n].join('\\n');\nconst user = (j.demo_mode ? '[MODE DEMO CONTROLE] ' : '') + 'Signal ventes: variation ' + j.variation_pct + '% (' + j.ventes_semaine + ' vs ' + j.ventes_semaine_prec + ' GNF). Trouve les explications soutenues par les donnees; ne force pas une cause si les preuves sont insuffisantes.';\nreturn [{ json: { ...j, plan_body: { model: 'gpt-4o-mini', temperature: 0,\n  response_format: { type: 'json_object' },\n  messages: [ { role: 'system', content: SYS }, { role: 'user', content: user } ] } } }];\n"
+      },
+      "id": "cd27dace-4ab4-4431-ac91-37e449a1820d",
+      "name": "Préparer plan invest.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.plan_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "9d5d6278-32e4-477a-93fc-ec2521321778",
+      "name": "GPT Plan investigation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        5776
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst base = $('Évaluer seuil').first().json;\nlet content = $json?.choices?.[0]?.message?.content || '{}';\nlet parsed; try { parsed = JSON.parse(content); } catch(e){ parsed = {hypotheses:[],requetes:[]}; }\nconst ALLOWED = new Set(['clients','fournisseurs','produits','ventes','vente_lignes','achats','achat_lignes','mouvements_stock','v_stock_produits']);\nfunction safe(sql){\n  if(typeof sql!=='string') return null;\n  sql = sql.trim().replace(/^```sql\\s*/i,'').replace(/^```\\s*/i,'').replace(/```$/i,'').trim();\n  if(!/^SELECT\\b/i.test(sql)) return null;\n  if(sql.includes(';')) return null;\n  if(/--|\\/\\*|\\*\\//.test(sql)) return null;\n  if(/\\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|CALL|DO|EXECUTE|MERGE|SET|RESET|VACUUM|ANALYZE|COMMENT|WITH|UNION|INTERSECT|EXCEPT)\\b/i.test(sql)) return null;\n  if(/\\b(PG_SLEEP|DBLINK|LO_IMPORT|LO_EXPORT|SET_CONFIG|PG_READ_FILE|PG_LS_DIR|PG_CATALOG|INFORMATION_SCHEMA)\\b/i.test(sql)) return null;\n  for(const m of sql.matchAll(/\\b(?:FROM|JOIN)\\s+\"?([a-zA-Z_][a-zA-Z0-9_]*)\"?/gi)){\n    if(!ALLOWED.has(m[1].toLowerCase())) return null;\n  }\n  return sql;\n}\nconst reqs = Array.isArray(parsed.requetes)? parsed.requetes.slice(0,3):[];\nconst out = [];\nreqs.forEach((q,i)=>{ const s=safe(q); if(s) out.push({ json: { ...base, hypotheses: parsed.hypotheses||[], invest_index:i, safe_sql:s } }); });\nif(out.length===0){ out.push({ json: { ...base, hypotheses: parsed.hypotheses||[], invest_index:-1, safe_sql: \"SELECT 'aucune requete valide' AS info\" } }); }\nreturn out;\n"
+      },
+      "id": "0bcfe94f-ee4e-460a-a1fd-ebc2c4b0fb75",
+      "name": "Valider SQL invest.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.safe_sql }}",
+        "options": {}
+      },
+      "id": "16fefb4f-6c05-437e-b201-eddfb5049d86",
+      "name": "Exécuter invest. (RO)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2640,
+        5776
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst base = $('Évaluer seuil').first().json;\nconst preuves = items.map((it,idx)=>({\n  index:idx,\n  requete:String(it.json.safe_sql||'').slice(0,300),\n  succes:!(it.json?.error || Number(it.json?.statusCode||0)>=400),\n  erreur:it.json?.error ? String(it.json.error.message||it.json.error).slice(0,220) : null,\n  resultat:it.json\n}));\nlet hypotheses = [];\ntry { hypotheses = $('Valider SQL invest.').first().json.hypotheses || []; } catch(e) {}\nreturn [{json:{...base,hypotheses,preuves,\n  preuves_reussies:preuves.filter(p=>p.succes).length,\n  preuves_en_echec:preuves.filter(p=>!p.succes).length,\n  technical_error:preuves.some(p=>!p.succes) ? preuves.filter(p=>!p.succes).map(p=>p.erreur).join(' | ').slice(0,900) : null,\n  error_origin:'requêtes investigation'\n}}];"
+      },
+      "id": "d71eaf2b-5b21-4f5f-ae45-c67719cf7a6e",
+      "name": "Collecter preuves",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { query: 'baisse ventes commerce Conakry Guinée cette semaine cause (route, marché, prix, météo, jour férié)', type: 'auto', numResults: 5, contents: { highlights: { numSentences: 2 } } } }}",
+        "options": {
+          "timeout": 25000
+        }
+      },
+      "id": "abe847e8-bc49-4c8a-b330-f7638a49ee65",
+      "name": "Exa - contexte externe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3120,
+        5776
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1200,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "o6C6dhtCTGYFHEN5",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Collecter preuves').first().json;\nlet exa = [];\nlet exa_error = null;\ntry {\n  const r = $json || {};\n  if (r.error || Number(r.statusCode || 0) >= 400) exa_error = String(r.error?.message || r.message || 'Recherche Exa indisponible');\n  const results = r.results || r.data?.results || [];\n  exa = results.slice(0,3).map(x=>({titre:x.title,url:x.url,\n    extrait:(x.highlights && x.highlights[0]) ? x.highlights[0] : String(x.text||'').slice(0,180)}));\n} catch(e) { exa_error = e.message; }\nreturn [{json:{...base,exa_contexte:exa,exa_available:exa.length>0,\n  exa_error:exa_error ? String(exa_error).slice(0,200) : null}}];"
+      },
+      "id": "51348736-b61a-4d39-b214-703c056a2ab3",
+      "name": "Assembler contexte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst j = $json;\nconst SYS = [\n'Tu es PLUTO DB Copilot, agent proactif pour un dirigeant de PME en Guinée.',\n'A partir de l\\'anomalie, des preuves SQL et du contexte externe (Exa), rends un verdict actionnable.',\n'Retourne UNIQUEMENT ce JSON:',\n'{\"confiance\":85,\"resume\":\"1 phrase\",\"cause_probable\":\"1-2 phrases (base)\",\"contexte_externe\":\"1 phrase + source ou \\\\\"non déterminant\\\\\"\",\"perte_estimee\":\"ordre de grandeur en GNF\",\"action_label\":\"action recommandée courte\",\"message_a_envoyer\":\"message pro prêt à envoyer (client/fournisseur/équipe)\",\"destinataire_phone\":\"numéro au format international sans +\"}',\n'Sépare clairement fait-base, fait-externe et déduction. Si exa_available=false, écris contexte externe indisponible et ne l’invente jamais. En mode demo, annonce explicitement qu’il s’agit d’une simulation contrôlée. Reste concret et bref (WhatsApp).'\n].join('\\n');\nconst user = JSON.stringify({ anomalie:{variation_pct:j.variation_pct, ventes_semaine:j.ventes_semaine, ventes_semaine_prec:j.ventes_semaine_prec},\n  hypotheses:j.hypotheses, preuves:j.preuves, exa:j.exa_contexte, exa_available:j.exa_available, exa_error:j.exa_error, demo_mode:j.demo_mode, demo_notice:j.demo_notice, manager:j.MANAGER_PHONE });\nreturn [{ json: { ...j, synth_body: { model:'gpt-4o-mini', temperature:0.2,\n  response_format:{type:'json_object'},\n  messages:[{role:'system',content:SYS},{role:'user',content:user}] } } }];\n"
+      },
+      "id": "3af77de4-378b-41c5-a416-bee6bbf7916a",
+      "name": "Préparer synthèse + action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.synth_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "c6b2d053-e71a-4323-a36b-6f1dc1fde078",
+      "name": "GPT Synthèse + action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3840,
+        5776
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Préparer synthèse + action').first().json;\nlet v; try { v = JSON.parse($json.choices[0].message.content); } catch(e) { v = {}; }\nconst digits = value => String(value || '').replace(/[^0-9]/g,'');\nconst confidence = Math.max(0,Math.min(100,Number(v.confiance||0)));\nconst minimum = Math.max(0,Math.min(100,Number($env.PLUTO_PROACTIVE_CONFIDENCE_MIN||75)));\nconst shouldNotify = Boolean(base.demo_mode || confidence >= minimum);\nconst demoDest = digits($env.PLUTO_DEMO_ACTION_PHONE || base.MANAGER_PHONE);\nconst proposedDest = digits(v.destinataire_phone || '') || base.MANAGER_PHONE;\nconst dest = base.demo_mode ? demoDest : proposedDest;\nconst approvalId = 'PLT-'+Date.now().toString(36).toUpperCase().slice(-7);\nconst msg = [\n  base.demo_mode ? '🧪 *PLUTO DB Copilot — DÉMONSTRATION CONTRÔLÉE*' : '⚠️ *PLUTO DB Copilot — Alerte proactive*',\n  v.resume || ('Variation des ventes : '+base.variation_pct+'% cette semaine.'),\n  base.demo_mode ? '_Cette séquence illustre le comportement agentique; elle n’affirme pas qu’un incident réel existe._' : '',\n  `🎯 *Confiance : ${confidence}%* — seuil ${minimum}%`,\n  '', '🔎 *Cause probable* : '+(v.cause_probable||'preuves insuffisantes'),\n  '🌍 *Contexte externe* : '+(base.exa_available ? (v.contexte_externe||'non déterminant') : 'indisponible — aucune source inventée'),\n  '💸 *Impact estimé* : '+(v.perte_estimee||'non déterminé'),\n  '', '✅ *Action proposée* : '+(v.action_label||'relance ciblée'),\n  `🔐 Autorisation ${approvalId} valable 30 minutes.`,\n  'Répondez *OUI* pour exécuter ou *NON* pour annuler. Sans réponse, aucune action.'\n].filter(Boolean).join('\\n');\nif (shouldNotify) {\n  const actionMessage = base.demo_mode\n    ? '[DEMONSTRATION PLUTO - AUCUNE ACTION REELLE REQUISE]\\n'+(v.message_a_envoyer||'Message de relance de démonstration.')\n    : (v.message_a_envoyer||'');\n  const sd = $getWorkflowStaticData('global');\n  sd.pending = sd.pending || {};\n  sd.pending[digits(base.MANAGER_PHONE)] = {message_to_send:actionMessage,destinataire_phone:dest,\n    action_label:v.action_label||'Action proposée',approval_id:approvalId,created_at:Date.now(),\n    expires_at:Date.now()+30*60*1000,demo_mode:Boolean(base.demo_mode)};\n}\nreturn [{json:{chat_id:base.MANAGER_PHONE,message:msg,session_id:base.SESSION_ID,\n  confidence,confidence_minimum:minimum,should_notify:shouldNotify,\n  suppression_reason:shouldNotify?null:`confiance ${confidence}% sous le seuil ${minimum}%`}}];"
+      },
+      "id": "eea74f39-5715-4b99-bfd7-88aff0b6fd59",
+      "name": "Préparer alerte + mémoriser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "f3629ed1-df08-49e6-921d-87df032820e6",
+      "name": "Envoyer alerte WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4320,
+        5776
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst sd = $getWorkflowStaticData('global');\nconst digits = value => String(value || '').replace(/[^0-9]/g, '');\nconst key = digits(j.chat_id);\nlet pending = sd.pending ? (sd.pending[key] || null) : null;\nconst txt = String(j.text || '').trim().toLowerCase().replace(/[.!?]+$/,'');\nconst yes = ['oui','ok','valider','envoyer','vas-y','vas y','1','yes'].includes(txt);\nconst no = ['non','ignorer','annuler','stop','2','no'].includes(txt);\nif (!pending) return [{json:{...j,pending_flow:false}}];\n\nif (Number(pending.expires_at || 0) < Date.now()) {\n  delete sd.pending[key];\n  return [{json:{...j,pending_flow:true,decision_valid:false,pending_expired:true}}];\n}\nif (!yes && !no) {\n  return [{json:{...j,pending_flow:true,decision_valid:false,pending_expired:false}}];\n}\nreturn [{json:{\n  ...j,pending_flow:true,decision_valid:true,do_execute:yes,pending_expired:false,\n  action_message:pending.message_to_send,action_dest:pending.destinataire_phone,\n  action_label:pending.action_label,approval_id:pending.approval_id\n}}];"
+      },
+      "id": "d5e9ecea-67ff-4298-ae5a-479104d0e652",
+      "name": "Router confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        5360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "11efce6a-049a-482e-8bb5-7c95504c3bb4",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.pending_flow }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "465acfd8-ce4a-481f-855c-4f7e8cb59ef7",
+      "name": "Confirmation en attente ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        5360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ec1509f1-78ab-4780-a00d-efac73efbdd4",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.do_execute }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cad31930-6fa7-48a4-bc00-643bd8c0632d",
+      "name": "Validée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        5248
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.action_dest, message: $json.action_message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "ad1ac9d2-3ec2-4691-8291-6b169ead8ddc",
+      "name": "Exécuter action WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        5168
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Router confirmation').first().json;\nconst sd = $getWorkflowStaticData('global');\nconst key = String(src.chat_id || '').replace(/[^0-9]/g,'');\nif (sd.pending) delete sd.pending[key];\nconst suffix = String(src.action_dest || '').replace(/[^0-9]/g,'').slice(-4);\nreturn [{json:{...src,message:[\n  '✅ *Action exécutée et confirmée*',\n  '',\n  `« ${src.action_label || 'Action approuvée'} » a été envoyée${suffix ? ' au numéro terminant par '+suffix : ''}.`,\n  `Référence : ${src.approval_id || 'non disponible'}.`,\n  'PLUTO continue maintenant la surveillance.'\n].join('\\n')}}];"
+      },
+      "id": "81083197-e891-4904-8db8-59dd496e62b4",
+      "name": "Confirmer exécution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2384,
+        5168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst sd = $getWorkflowStaticData('global');\nconst key = String(j.chat_id || '').replace(/[^0-9]/g,'');\nif (sd.pending) delete sd.pending[key];\nreturn [{json:{...j,message:'👌 *Action annulée*\\n\\nAucun message externe n’a été envoyé. PLUTO poursuit la surveillance.'}}];"
+      },
+      "id": "ee0516bf-e6ff-4c5d-874b-ef2548925b21",
+      "name": "Annuler action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        5408
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "8d49f80c-ce61-410f-bffd-2162204f022f",
+      "name": "Envoyer accusé WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2624,
+        5280
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.id_produit, s.nom, s.stock_minimum, s.stock_actuel, ROUND(COALESCE(c.conso_jour,0),2) AS conso_jour, CASE WHEN COALESCE(c.conso_jour,0) > 0 THEN ROUND(s.stock_actuel / c.conso_jour,1) END AS jours_avant_rupture FROM v_stock_produits s LEFT JOIN (SELECT id_produit, SUM(quantite)/14.0 AS conso_jour FROM mouvements_stock WHERE type_mouvement = 'SORTIE' AND date_mouvement >= CURRENT_DATE - INTERVAL '14 days' GROUP BY id_produit) c ON c.id_produit = s.id_produit WHERE s.stock_actuel <= s.stock_minimum OR (COALESCE(c.conso_jour,0) > 0 AND s.stock_actuel / c.conso_jour <= 3) ORDER BY jours_avant_rupture NULLS LAST",
+        "options": {}
+      },
+      "id": "64000e84-87cf-4d58-904c-10809949432d",
+      "name": "Scan stock (RO)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        960,
+        6208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst cfg = $('Paramètres surveillance').first().json;\nconst rows = $input.all().map(i=>i.json).filter(r=>r && r.nom);\nif (rows.length === 0) return [{ json: { ...cfg, rupture:false, produits:[] } }];\nconst produits = rows.map(r=>({ nom:r.nom, stock:r.stock_actuel, min:r.stock_minimum,\n  jours: (r.jours_avant_rupture===null||r.jours_avant_rupture===undefined)?null:Number(r.jours_avant_rupture) }));\nreturn [{ json: { ...cfg, rupture:true, produits } }];\n"
+      },
+      "id": "322ef15f-057b-423b-902d-4cdb7c37a785",
+      "name": "Évaluer rupture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        6208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ed5df183-b422-4060-b803-eaa9cf1bcd2c",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.rupture }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0c73dd6d-d10e-427c-9486-4bb9685def56",
+      "name": "Rupture ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        6208
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a4057104-f940-4d66-8b46-557c6c315a6c",
+      "name": "Fin normale sans anomalie stock",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        6368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rupt = $('Évaluer rupture').first().json;\nconst cause = $json || {};\nconst produits = Array.isArray(rupt.produits) ? rupt.produits : [];\nconst lignes = produits.map(p=>{\n  const jr = (p.jours===null||p.jours===undefined) ? 'sous le minimum' : ('rupture dans ~'+p.jours+' j');\n  return '• *'+p.nom+'* : stock '+p.stock+' (min '+p.min+') — '+jr;\n}).join('\\n');\nconst fournisseur = cause.fournisseur || 'le fournisseur';\nconst dest = (cause.telephone && String(cause.telephone).replace(/[^0-9]/g,'')) || rupt.MANAGER_PHONE;\nconst causeTxt = cause.numero_achat\n  ? ('commande ' + cause.numero_achat + ' du ' + String(cause.date_achat).slice(0,10) + ' passée à ' + fournisseur + ' et non livrée')\n  : 'réapprovisionnement fournisseur en retard';\nconst minimum = Math.max(0,Math.min(100,Number($env.PLUTO_PROACTIVE_CONFIDENCE_MIN||75)));\nconst exactStockEvidence = produits.length > 0 && produits.every(p=>Number.isFinite(Number(p.stock)) && Number.isFinite(Number(p.min)));\nconst confidence = exactStockEvidence ? (cause.numero_achat ? 95 : 82) : 55;\nconst shouldNotify = confidence >= minimum;\nconst approvalId = 'PLT-'+Date.now().toString(36).toUpperCase().slice(-7);\nconst msg = [\n '📦 *PLUTO DB Copilot — Risque de rupture*',\n lignes,\n '',\n `🎯 *Confiance : ${confidence}%* — seuil ${minimum}%`,\n '🔎 Cause probable : ' + causeTxt + '.',\n '✅ Action proposée : relancer ' + fournisseur + ' pour livraison urgente.',\n `🔐 Autorisation ${approvalId} valable 30 minutes.`,\n 'Répondez *OUI* pour envoyer la relance, *NON* pour annuler.'\n].join('\\n');\nconst relance = 'Bonjour ' + fournisseur + ', votre commande ' + (cause.numero_achat||'') +\n  ' (matériel informatique) n\\'est pas encore livrée et nous sommes en rupture de stock. ' +\n  'Merci de confirmer une livraison en urgence.';\nif (shouldNotify) {\n  const sd = $getWorkflowStaticData('global');\n  sd.pending = sd.pending || {};\n  const key = String(rupt.MANAGER_PHONE||'').replace(/[^0-9]/g,'');\n  sd.pending[key] = { message_to_send: relance, destinataire_phone: dest,\n    action_label: 'Relance fournisseur (rupture)', approval_id:approvalId, created_at:Date.now(), expires_at:Date.now()+30*60*1000 };\n}\nreturn [{ json: { chat_id: rupt.MANAGER_PHONE, message: msg, session_id: rupt.SESSION_ID,\n  confidence, confidence_minimum:minimum, should_notify:shouldNotify,\n  suppression_reason:shouldNotify?null:`confiance ${confidence}% sous le seuil ${minimum}%` } }];"
+      },
+      "id": "041577d9-120d-445e-8533-72960801f907",
+      "name": "Préparer alerte rupture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        6160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "f4b11a61-00a3-42df-94e8-7f92b090e315",
+      "name": "Envoyer alerte rupture WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        6160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.numero_achat, a.date_achat::date AS date_achat, f.nom AS fournisseur, f.telephone, string_agg(p.nom, ', ') AS produits FROM achats a JOIN fournisseurs f ON f.id_fournisseur = a.id_fournisseur JOIN achat_lignes al ON al.id_achat = a.id_achat JOIN produits p ON p.id_produit = al.id_produit WHERE a.statut = 'COMMANDE' AND a.date_achat >= CURRENT_DATE - INTERVAL '20 days' AND EXISTS (SELECT 1 FROM achat_lignes al2 JOIN v_stock_produits s ON s.id_produit = al2.id_produit WHERE al2.id_achat = a.id_achat AND s.stock_actuel <= s.stock_minimum) GROUP BY a.numero_achat, a.date_achat, f.nom, f.telephone ORDER BY a.date_achat DESC LIMIT 1",
+        "options": {}
+      },
+      "id": "c3fbc3cc-fd53-475c-8162-b23e672ec908",
+      "name": "Chercher cause fournisseur (RO)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        6208
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let src = {};\ntry { src = $('Normaliser message GOWA').first().json; } catch(e) { src = $json || {}; }\nreturn [{json:{...src,technical_error:String($json?.error?.message || $json?.message || '').slice(0,900),error_origin:'analyse principale',message:[\n  '⚠️ *Je n’ai pas pu terminer cette analyse.*',\n  '',\n  'Aucune donnée n’a été modifiée et aucune action externe n’a été exécutée.',\n  'Réessayez dans quelques secondes. Si le problème persiste, envoyez une question plus courte.',\n  '',\n  'Le détail technique reste consultable dans l’historique n8n.'\n].join('\\n')}}];"
+      },
+      "id": "0bee328d-4c09-46dc-ae50-9dbda4541171",
+      "name": "Préparer réessai",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3088,
+        7248
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "c489ad52-72f2-4258-90c3-729e97d1fe25",
+      "name": "Envoyer réessai WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3328,
+        7248
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "64890973-9a18-4b7e-aae1-e46994e2394a",
+              "leftValue": "={{ $json.unsupported_input !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "566a017d-4f53-4e15-b2a1-0c7d90046e07",
+      "name": "Entrée exploitable ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -80,
+        4640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nreturn [{json:{...j,message:[\n  '🪐 *PLUTO DB Copilot*',\n  '',\n  `Je reçois bien votre ${j.input_kind || 'contenu'}, mais je ne peux pas encore l’analyser directement.`,\n  'Envoyez votre demande sous forme de *texte* ou de *note vocale*.',\n  '',\n  'Exemple : « Quel est le chiffre d’affaires des 7 derniers jours ? »'\n].join('\\n')}}];"
+      },
+      "id": "602aca61-10e5-405d-8f39-184e3506f53e",
+      "name": "Préparer format non supporté",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        4920
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "2e53e8f5-2249-4979-a145-f0f5deb949f9",
+      "name": "Envoyer format non supporté WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        4920
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ca012fdb-6584-4519-9db0-d25b5be56f17",
+              "leftValue": "={{ ['/demo-alerte','demo alerte'].includes(String($json.text || '').trim().toLowerCase()) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f03b00fb-fa62-43ab-a5a0-69583d2702f9",
+      "name": "Commande démonstration ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        4810
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst digits = value => String(value || '').replace(/[^0-9]/g, '');\nconst manager = digits($env.PLUTO_MANAGER_CHAT_ID || '');\nconst chat = digits(j.chat_id);\nconst session = String($env.PLUTO_GOWA_SESSION_ID || j.session_id || '').trim();\nreturn [{json:{\n  ...j, demo_mode:true, demo_authorized:Boolean(manager && chat === manager),\n  MANAGER_PHONE:manager, SESSION_ID:session, SEUIL_BAISSE_PCT:-15,\n  supervision_configured:Boolean(manager && session)\n}}];"
+      },
+      "id": "6bf30348-45c4-41f8-b018-75b653961cdf",
+      "name": "Préparer démo contrôlée",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        5000
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c37389fb-2818-4cf8-8fe5-df71826d82b7",
+              "leftValue": "={{ $json.demo_authorized === true && $json.supervision_configured === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fdbb5ee2-3f62-4b7e-8671-711171b2d709",
+      "name": "Démo autorisée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        5000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst reason = !j.supervision_configured\n  ? 'La démonstration proactive n’est pas configurée. Renseignez PLUTO_MANAGER_CHAT_ID et PLUTO_GOWA_SESSION_ID.'\n  : 'Cette commande est réservée au numéro manager configuré.';\nreturn [{json:{...j,message:'🔒 *Commande de démonstration refusée*\\n\\n'+reason}}];"
+      },
+      "id": "a1846efc-8f60-46d3-b96f-40e159ac6b44",
+      "name": "Préparer refus démo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        5160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "8eb2bbf0-0047-4507-861a-09a60014a010",
+      "name": "Envoyer refus démo WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        5160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst intro = j.is_audio\n  ? '🎙️ Vocal compris. Je vérifie maintenant les données autorisées.'\n  : '🔎 Demande reçue. Je vérifie les données avant de répondre.';\nreturn [{json:{...j,message:intro}}];"
+      },
+      "id": "b186e649-4c92-4917-a223-17b91c4bdedb",
+      "name": "Préparer accusé traitement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        4470
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "ed1a4ad4-c4c9-4d4a-ac52-d9e11a34ef48",
+      "name": "Envoyer accusé traitement WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        4470
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:$('Préparer accusé traitement').first().json}];"
+      },
+      "id": "6b73b976-5e54-4af6-b466-cf7518f5c128",
+      "name": "Restaurer demande après accusé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        4470
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "EXPLAIN (FORMAT JSON) {{ $json.safe_sql }}",
+        "options": {}
+      },
+      "id": "87c3ea9d-27f1-4fb2-8a15-ee5457137d31",
+      "name": "Préflight SQL PostgreSQL (RO)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2400,
+        4528
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Après import, sélectionne ici la credential PostgreSQL utilisant le compte db_copilot_ro (Host postgres, port 5432)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const src=$('Valider et sécuriser SQL').first().json;\nconst state=$getWorkflowStaticData('global');\nconst key=String(src.message_id||src.chat_id+'|'+src.original_question).slice(0,300);\nif(state.sql_retries) delete state.sql_retries[key];\nreturn [{json:src}];"
+      },
+      "id": "d5283f7a-ea03-4ad9-bebf-d9d541f3c02d",
+      "name": "Restaurer requête après préflight",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        4528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Construire réponse et graphique').first().json;\nconst reason = String($json?.error?.message || $json?.message || 'service graphique indisponible').slice(0,180);\nreturn [{json:{...src,technical_error:reason,error_origin:'pipeline graphique',message:[\n  '📊 *Le résultat principal a bien été envoyé.*',\n  'La pièce jointe graphique n’a pas pu être transmise.',\n  src.chart_url ? 'Vous pouvez ouvrir le graphique ici : '+src.chart_url : '',\n  '',\n  'Diagnostic court : '+reason\n].filter(Boolean).join('\\n')}}];"
+      },
+      "id": "0e57cd61-3b80-4635-a942-3c4204c5f189",
+      "name": "Préparer secours graphique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3920,
+        4680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "3dce5c47-488b-48b0-8421-aa2fd21cf114",
+      "name": "Envoyer secours graphique WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        4680
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "edbb3252-6077-41c9-a038-2b2fd2220638",
+              "leftValue": "={{ $json.decision_valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "48a81a6a-3e2d-480d-af06-a39b28428cd2",
+      "name": "Décision comprise ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1900,
+        5280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst message = j.pending_expired\n  ? '⌛ *Cette proposition a expiré.*\\n\\nAucune action n’a été exécutée. Attendez la prochaine alerte ou relancez la démonstration avec /demo-alerte.'\n  : '🤝 *J’attends votre décision.*\\n\\nRépondez uniquement *OUI* pour exécuter l’action proposée ou *NON* pour l’annuler. Rien ne sera envoyé sans votre accord.';\nreturn [{json:{...j,message}}];"
+      },
+      "id": "08d8f575-6b1f-4962-9810-d4ccdc469b1e",
+      "name": "Préparer décision à clarifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        5440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Router confirmation').first().json;\nconst detail = String($json?.error?.message || $json?.message || 'échec du connecteur WhatsApp').slice(0,220);\nreturn [{json:{...src,technical_error:detail,error_origin:'exécution action approuvée',message:[\n  '❌ *Action non exécutée*',\n  '',\n  'La relance n’a pas été envoyée. Aucune confirmation de succès n’a été enregistrée.',\n  'Vous pouvez répondre *OUI* pour réessayer tant que l’autorisation n’a pas expiré.',\n  '',\n  'Détail : '+detail\n].join('\\n')}}];"
+      },
+      "id": "b09ec772-1a4d-4d3f-bf40-9d11e77dfca1",
+      "name": "Préparer échec action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        5160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6389826c-8365-41fc-b0cf-69dd9046829e",
+              "leftValue": "={{ $json.supervision_configured === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4de449ed-8e25-4b63-89f1-b04cdf072782",
+      "name": "Surveillance configurée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -420,
+        5776
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "ed57e701-2ba1-4405-9c88-9e34e5366f20",
+      "name": "Fin surveillance non configurée",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        5960
+      ],
+      "notes": "Renseigner PLUTO_MANAGER_CHAT_ID et PLUTO_GOWA_SESSION_ID pour activer les alertes autonomes."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "EXPLAIN (FORMAT JSON) {{ $json.safe_sql }}",
+        "options": {}
+      },
+      "id": "3e39a31f-d6df-4206-b625-d5330e7f1f60",
+      "name": "Préflight investigation PostgreSQL (RO)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1500,
+        5740
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "postgres": {
+          "id": "H9BSvwlMCsNGPMpQ",
+          "name": "Postgres account 2"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Après import, sélectionne ici la credential PostgreSQL utilisant le compte db_copilot_ro (Host postgres, port 5432)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const validated = $('Valider SQL invest.').all();\nconst preflight = $input.all();\nconst rejected = preflight.filter(item => item.json?.error || Number(item.json?.statusCode || 0) >= 400);\nconst outputs = [];\nfor (const [position,item] of preflight.entries()) {\n  if (item.json?.error || Number(item.json?.statusCode || 0) >= 400) continue;\n  const paired = Array.isArray(item.pairedItem) ? item.pairedItem[0] : item.pairedItem;\n  const index = Number.isInteger(paired?.item) ? paired.item : position;\n  const source = validated[index]?.json;\n  if (source?.safe_sql) outputs.push({json:{\n    ...source,preflight_valid:true,preflight_rejected:rejected.length,\n    technical_error:rejected.length ? `${rejected.length} requête(s) refusée(s) par PostgreSQL pendant le préflight` : null,\n    error_origin:'préflight investigation PostgreSQL'\n  }});\n}\nif (!outputs.length) {\n  const base = validated[0]?.json || $('Évaluer seuil').first().json;\n  return [{json:{\n    ...base,preflight_valid:false,preflight_rejected:Math.max(rejected.length,validated.length),\n    technical_error:'Toutes les requêtes de l’enquête ont été refusées par le parseur PostgreSQL',\n    error_origin:'préflight investigation PostgreSQL'\n  }}];\n}\nreturn outputs;"
+      },
+      "id": "e0210fc0-b8c0-44f3-9dbf-0164d9e7c9ba",
+      "name": "Restaurer requêtes après préflight investigation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        5740
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "98349d90-d580-49e2-a135-6a1f6d3edc36",
+              "leftValue": "={{ $json.preflight_valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e27d99ab-228d-4e48-b074-bdaecfbb13af",
+      "name": "Préflight investigation valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        5740
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nreturn [{json:{...j,chat_id:j.MANAGER_PHONE,session_id:j.SESSION_ID,message:[\n  '⚠️ *PLUTO a détecté un signal mais n’a pas pu terminer l’enquête.*',\n  '',\n  'Les requêtes proposées ont été refusées par le préflight PostgreSQL. Aucune action n’a été exécutée.',\n  'Le diagnostic technique est conservé pour l’administrateur. Vous pouvez relancer avec */demo-alerte* après correction.'\n].join('\\n')}}];"
+      },
+      "id": "61978f4c-d3df-4fae-8571-0e94cfe39f2f",
+      "name": "Préparer échec investigation proactive",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        5900
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json || {};\nconst raw = String(j.technical_error || j.exa_error || '').trim();\nif (!raw) return [];\nconst digits = value => String(value || '').replace(/[^0-9]/g,'');\nconst admin = digits($env.PLUTO_ERROR_ADMIN_PHONE || $env.PLUTO_MANAGER_CHAT_ID || '');\nconst session = String($env.PLUTO_GOWA_SESSION_ID || j.session_id || j.SESSION_ID || '').trim();\nif (!admin || !session) return [];\nconst clean = value => String(value || '')\n  .replace(/sk-[A-Za-z0-9_-]{12,}/g,'[CLE_OPENAI_MASQUEE]')\n  .replace(/(Bearer\\s+)[A-Za-z0-9._-]+/gi,'$1[MASQUE]')\n  .replace(/((?:password|token|api[_ -]?key)\\s*[:=]\\s*)[^\\s,;]+/gi,'$1[MASQUE]');\nconst origin = String(j.error_origin || (j.exa_error ? 'recherche Exa' : 'erreur gérée'));\nconst state = $getWorkflowStaticData('global');\nstate.handled_error_recent = state.handled_error_recent || {};\nconst key = (origin+'|'+raw).slice(0,500);\nlet hash=0; for(const ch of key) hash=((hash<<5)-hash+ch.charCodeAt(0))|0;\nconst id=String(hash), now=Date.now();\nif (state.handled_error_recent[id] && now-state.handled_error_recent[id] < 5*60*1000) return [];\nstate.handled_error_recent[id]=now;\nreturn [{json:{chat_id:admin,session_id:session,message:[\n  '⚠️ *PLUTO — ERREUR GÉRÉE*',\n  '', `Heure : ${new Date().toISOString()}`, `Origine : ${clean(origin)}`,\n  `Message : ${clean(raw).slice(0,1800)}`,\n  j.chat_id ? `Conversation concernée : ...${digits(j.chat_id).slice(-4)}` : '',\n  '', 'Le parcours utilisateur a reçu une réponse de secours. Vérifiez l’historique n8n pour le détail complet.'\n].filter(Boolean).join('\\n')}}];"
+      },
+      "id": "ca6eb051-db29-4f28-addd-7bf479a151ab",
+      "name": "Préparer diagnostic erreur gérée",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3580,
+        7420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gowa:3000/send/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Device-Id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.chat_id, message: $json.message } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "57338e8b-18aa-45a4-8cfd-6f56718aacca",
+      "name": "Envoyer erreur gérée administrateur",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3820,
+        7420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "e81j23s98LaqSqRT",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Notification des erreurs déjà traitées par une réponse utilisateur; évite le trou de supervision du Error Trigger."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pluto-control:8080/memory/get",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-PLUTO-Token",
+              "value": "={{ $env.PLUTO_CONTROL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $json.chat_id } }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "ba361aab-9347-44db-9fd7-49d0da1d0aec",
+      "name": "Charger mémoire Redis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        4470
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Restaurer demande après accusé').first().json;\nconst response = $json || {};\nconst text = String(base.text || '').trim();\nconst followup = /^(et\\b|pour\\b|le mois dernier\\b|la semaine dernière\\b|même chose\\b|fais[- ]?en\\b|un graphique\\b|ceux\\b|celles\\b)/i.test(text)\n  || /\\b(et pour|même période|mois précédent|fais-en un graphique)\\b/i.test(text);\nconst context = response.found === true ? response.context : null;\nlet resolved = text;\nif (followup && context?.question) {\n  resolved = [\n    'QUESTION DE SUIVI : '+text,\n    'QUESTION PRÉCÉDENTE : '+String(context.question).slice(0,1000),\n    'RÉPONSE PRÉCÉDENTE : '+String(context.answer_summary||'').slice(0,1000),\n    'Interprète la question de suivi dans ce contexte, sans inventer de nouvelles données.'\n  ].join('\\n');\n}\nconst serviceError = response.error || ($json?.statusCode ? $json.message : null);\nreturn [{json:{...base,resolved_question:resolved,memory_used:Boolean(followup&&context?.question),\n  memory_found:Boolean(context),technical_error:serviceError ? String(serviceError).slice(0,900) : null,\n  error_origin:'mémoire Redis'}}];"
+      },
+      "id": "5d5e3d5a-d4b8-47fc-bb8c-71992163d2ef",
+      "name": "Appliquer mémoire conversationnelle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        4470
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Construire réponse et graphique').first().json;\nconst query = $('Valider et sécuriser SQL').first().json;\nreturn [{json:{...result,memory_body:{\n  chat_id:result.chat_id,question:String(query.original_question||query.text||'').slice(0,2000),\n  analytical_question:String(query.analytical_question||'').slice(0,2000),\n  answer_summary:String(result.message||'').slice(0,2000),\n  generated_sql:String(query.generated_sql||'').slice(0,20000),had_chart:Boolean(result.has_chart)\n}}}];"
+      },
+      "id": "eb94d93b-66b8-48c9-88aa-278faf3dd307",
+      "name": "Préparer mémoire à stocker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        4350
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pluto-control:8080/memory/set",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-PLUTO-Token",
+              "value": "={{ $env.PLUTO_CONTROL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.memory_body }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "805c2989-22e4-456b-a47e-6247654fc0e2",
+      "name": "Mémoriser échange Redis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        4350
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "if ($json?.stored === true) return [];\nreturn [{json:{...$('Préparer mémoire à stocker').first().json,\n  technical_error:String($json?.error?.message || $json?.error || $json?.message || 'écriture Redis non confirmée').slice(0,900),\n  error_origin:'écriture mémoire Redis'}}];"
+      },
+      "id": "71a5d01e-36ab-4303-b857-e94bd6ec4ff7",
+      "name": "Vérifier mémorisation Redis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        4350
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pluto-control:8080/sql/validate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-PLUTO-Token",
+              "value": "={{ $env.PLUTO_CONTROL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { sql: $json.generated_sql } }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "48efd214-3efd-4718-bb50-411751519b66",
+      "name": "Validation AST SQLGlot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2260,
+        4460
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Valider et sécuriser SQL').first().json;\nconst r = $json || {};\nconst valid = r.valid === true && typeof r.normalized_sql === 'string';\nconst operational = Boolean(r.statusCode || (r.error && !r.stage));\nreturn [{json:{...base,ast_valid:valid,ast_stage:r.stage||null,ast_error:valid?null:String(r.error||r.message||'service AST indisponible'),\n  ast_fingerprint:r.fingerprint||null,ast_tables:r.tables||[],\n  safe_sql:valid ? `SELECT * FROM (${r.normalized_sql}) AS pluto_ast_result LIMIT 200` : base.safe_sql,\n  technical_error:operational ? String(r.error?.message||r.error||r.message).slice(0,900) : null,\n  error_origin:'validation AST SQLGlot'}}];"
+      },
+      "id": "f362fd44-165d-458a-86c9-20c475984b92",
+      "name": "Appliquer verdict AST",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        4460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "54bdab2a-8c0e-4a07-89ce-98c4e2bb8d36",
+              "leftValue": "={{ $json.ast_valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ed99689a-09f4-4de6-a6af-84a71f3a3b86",
+      "name": "SQL AST autorisé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2660,
+        4460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pluto-control:8080/sql/validate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-PLUTO-Token",
+              "value": "={{ $env.PLUTO_CONTROL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { sql: $json.safe_sql } }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "9f2376b4-1e6b-4a5c-ab09-1149d547bdc0",
+      "name": "Validation AST investigation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        5680
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Valider SQL invest.').all();\nconst responses = $input.all();\nconst accepted = [];\nconst rejected = [];\nfor (const [position,item] of responses.entries()) {\n  const paired = Array.isArray(item.pairedItem) ? item.pairedItem[0] : item.pairedItem;\n  const index = Number.isInteger(paired?.item) ? paired.item : position;\n  const base = source[index]?.json;\n  if (item.json?.valid === true && base) {\n    accepted.push({json:{...base,safe_sql:item.json.normalized_sql,ast_valid:true,ast_fingerprint:item.json.fingerprint}});\n  } else {\n    rejected.push(String(item.json?.error?.message||item.json?.error||item.json?.message||'requête refusée'));\n  }\n}\nif (!accepted.length) {\n  const base = source[0]?.json || $('Évaluer seuil').first().json;\n  return [{json:{...base,ast_valid:false,ast_rejected:rejected.length,\n    technical_error:rejected.join(' | ').slice(0,900),error_origin:'AST investigation'}}];\n}\nreturn accepted.map(item=>({json:{...item.json,ast_rejected:rejected.length,\n  technical_error:rejected.length ? rejected.join(' | ').slice(0,900) : null,error_origin:'AST investigation'}}));"
+      },
+      "id": "1a23e10e-b303-4fcd-98ed-de97915dbeca",
+      "name": "Appliquer AST investigation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
+        5680
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "28f9a0a6-996d-4b42-9160-a91bbb776ea1",
+              "leftValue": "={{ $json.ast_valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ed8bf91a-55ee-48a0-9c49-5996aecd3a1e",
+      "name": "AST investigation autorisé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        5680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = (()=>{ try { return $('Valider et sécuriser SQL').first().json; } catch(e) { return $json||{}; } })();\nconst state = $getWorkflowStaticData('global');\nstate.sql_retries = state.sql_retries || {};\nconst now = Date.now();\nfor (const [key,value] of Object.entries(state.sql_retries)) if (now-Number(value.ts||0)>30*60*1000) delete state.sql_retries[key];\nconst key = String(base.message_id || base.chat_id+'|'+base.original_question).slice(0,300);\nconst previous = Number(state.sql_retries[key]?.count || 0);\nconst allowed = previous < 1;\nif (allowed) state.sql_retries[key] = {count:previous+1,ts:now};\nconst error = String($json?.ast_error || $json?.error?.message || $json?.message || base.sql_error || 'requête refusée').slice(0,1200);\nconst prompt = [\n  'Corrige UNE FOIS cette requête PostgreSQL de lecture seule.',\n  'Retourne uniquement un SELECT brut, sans Markdown ni point-virgule.',\n  'Tables autorisées: clients,fournisseurs,produits,ventes,vente_lignes,achats,achat_lignes,mouvements_stock,v_stock_produits.',\n  'Interdits: écriture, CTE, UNION, sous-requête, schémas système, fonctions système.',\n  'Question: '+String(base.original_question||base.text||''),\n  'SQL refusé: '+String(base.generated_sql||''),\n  'Erreur du validateur: '+error\n].join('\\n');\nreturn [{json:{...base,autocorrection_allowed:allowed,sql_retry_key:key,sql_retry_count:previous+1,\n  correction_error:error,correction_body:{model:'gpt-4o-mini',temperature:0,\n    messages:[{role:'system',content:'Tu es le réparateur SQL sécurisé de PLUTO. Tu ne produis que le SELECT corrigé.'},{role:'user',content:prompt}]}}}];"
+      },
+      "id": "713d930a-274b-495a-9535-a66fb4a09c59",
+      "name": "Préparer auto-correction SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        4660
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a7ecc41c-9689-4682-bac9-afb10081729a",
+              "leftValue": "={{ $json.autocorrection_allowed === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9067adf0-049c-4899-bbf5-8bee5166c54b",
+      "name": "Auto-correction autorisée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3060,
+        4660
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.correction_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "03efbee1-6b99-4a5f-ab1e-1cd36c4d1539",
+      "name": "GPT Auto-correction SQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3260,
+        4620
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qptwTcv32QFMAbhJ",
+          "name": "Bearer Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Préparer auto-correction SQL').first().json;\nconst content = String($json?.choices?.[0]?.message?.content || '').trim();\nreturn [{json:{...base,choices:[{message:{content}}],sql_retry_count:1}}];"
+      },
+      "id": "b479d7bd-a1a4-4406-9db0-496cb6153c59",
+      "name": "Appliquer SQL auto-corrigé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3460,
+        4620
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2436845a-ce90-4c45-8c76-fad5167ec5d7",
+              "leftValue": "={{ $json.should_notify === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d31e87d2-f200-499d-9d42-bd574abc5aa0",
+      "name": "Confiance proactive suffisante ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4140,
+        5776
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "570e0862-b3f4-4620-97ee-3bdd7ad95b83",
+      "name": "Fin normale confiance insuffisante",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4380,
+        5940
+      ],
+      "notes": "Aucune notification métier n'est envoyée sous le seuil de confiance configuré."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "17d8ba32-fce0-49bc-a62a-a6c9d5c37399",
+              "leftValue": "={{ ['/audit','audit'].includes(String($json.text || '').trim().toLowerCase()) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "11ca453f-f9bf-4d08-b32d-93fd322164ad",
+      "name": "Commande audit ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        620,
+        4780
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$json;\nconst digits=value=>String(value||'').replace(/[^0-9]/g,'');\nconst manager=digits($env.PLUTO_MANAGER_CHAT_ID||'');\nreturn [{json:{...j,audit_authorized:Boolean(manager&&digits(j.chat_id)===manager)}}];"
+      },
+      "id": "a7699df0-82a3-4245-967a-dc2783e8b3dd",
+      "name": "Préparer consultation audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        4860
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b9a69109-1fb0-4af1-9055-b0fb0be4804e",
+              "leftValue": "={{ $json.audit_authorized === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0fd2d4aa-57a4-4339-9b36-60a9520bbd63",
+      "name": "Audit autorisé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        4860
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT approval_id, action_label, destination_last4, status, approved_at, executed_at, execution_reference FROM public.v_pluto_action_audit ORDER BY approved_at DESC LIMIT 5",
+        "options": {}
+      },
+      "id": "ddd28fc4-9ff2-4295-9009-3e9dfec10af5",
+      "name": "Lire journal actions (AUDIT ROLE)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1300,
+        4800
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "onError": "continueErrorOutput",
+      "notes": "Après import, sélectionne ici la credential PostgreSQL utilisant le compte db_copilot_ro (Host postgres, port 5432)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$('Préparer consultation audit').first().json;\nconst rows=$input.all().map(i=>i.json).filter(r=>r&&r.approval_id);\nconst lines=rows.length ? rows.map((r,i)=>`${i+1}. *${r.approval_id}* — ${r.status}\\n${r.action_label}\\nDestination ...${r.destination_last4||'—'} · ${String(r.executed_at||r.approved_at||'').slice(0,19)}`)\n  : ['Aucune action approuvée n’est encore enregistrée.'];\nreturn [{json:{...base,message:'🧾 *Journal d’audit PLUTO*\\n\\n'+lines.join('\\n\\n')}}];"
+      },
+      "id": "f3e03f85-31d4-41d9-bac9-9d46f4324849",
+      "name": "Formater journal audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        4800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...$json,message:'🔒 Le journal d’audit est réservé au numéro manager configuré.'}}];"
+      },
+      "id": "195fd470-4df6-47f1-b5fe-2edb5c7e581b",
+      "name": "Préparer refus audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        5000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$('Préparer consultation audit').first().json;\nconst detail=String($json?.error?.message||$json?.message||'journal indisponible').slice(0,900);\nreturn [{json:{...base,message:'⚠️ Le journal d’audit est momentanément indisponible. Aucune action n’a été exécutée.',\n  technical_error:detail,error_origin:'lecture journal audit'}}];"
+      },
+      "id": "1fae0ac7-8db8-4edf-93c3-7461a86cda3b",
+      "name": "Préparer erreur lecture audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        4960
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src=$('Router confirmation').first().json;\nreturn [{json:{...src,audit_payload:{approval_id:src.approval_id||'PLT-INCONNU',approved_by:src.chat_id||'',\n  action_label:src.action_label||'Action approuvée',destination_last4:String(src.action_dest||'').replace(/[^0-9]/g,'').slice(-4),\n  status:'EXECUTED',requested_at:new Date(Date.now()-1000).toISOString(),approved_at:new Date().toISOString(),\n  executed_at:new Date().toISOString(),execution_reference:String($execution.id||''),metadata:{source:'whatsapp',human_approval:true}}}}];"
+      },
+      "id": "bd9a184c-9199-440e-b33f-923f4e959cc7",
+      "name": "Préparer journalisation action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        5200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d) INSERT INTO public.pluto_action_audit (approval_id,approved_by_hash,action_label,destination_last4,channel,status,requested_at,approved_at,executed_at,execution_reference,metadata) SELECT d->>'approval_id',md5(d->>'approved_by'),d->>'action_label',d->>'destination_last4','whatsapp',d->>'status',(d->>'requested_at')::timestamptz,(d->>'approved_at')::timestamptz,(d->>'executed_at')::timestamptz,d->>'execution_reference',COALESCE(d->'metadata','{}'::jsonb) FROM p ON CONFLICT (approval_id) DO NOTHING RETURNING approval_id",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.audit_payload) }}"
+        }
+      },
+      "id": "c7c671e8-764c-4c6a-ba21-d1f95ef83fe0",
+      "name": "Journaliser action (WRITE AUDIT ONLY)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2840,
+        5200
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2500,
+      "onError": "continueErrorOutput",
+      "notes": "Sélectionner la credential PostgreSQL db_copilot_audit. Ce rôle n'a que INSERT/SELECT sur le journal PLUTO."
+    },
+    {
+      "parameters": {
+        "jsCode": "const src=$('Router confirmation').first().json;\nconst detail=String($json?.error?.message||$json?.message||'écriture audit non confirmée').slice(0,900);\nconst key=String(src.chat_id||'').replace(/[^0-9]/g,'');\nconst sd=$getWorkflowStaticData('global'); if(sd.pending) delete sd.pending[key];\nreturn [{json:{...src,message:[\n  '⚠️ *Action exécutée, audit incomplet*','',\n  'Le message externe a bien été envoyé, mais son enregistrement dans le journal PostgreSQL a échoué.',\n  `Référence d’approbation : ${src.approval_id||'non disponible'}.`,\n  'L’administrateur technique a été informé.'\n].join('\\n'),technical_error:detail,error_origin:'journalisation action approuvée'}}];"
+      },
+      "id": "84bda82f-89ee-4855-af03-e65cf94a4a91",
+      "name": "Confirmer action avec audit en échec",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3060,
+        5320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cf-stock-001",
+              "leftValue": "={{ $json.should_notify === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "pluto-v7-stock-confidence",
+      "name": "Confiance rupture suffisante ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        6440,
+        1580
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "pluto-v7-stock-silent",
+      "name": "Fin normale confiance rupture insuffisante",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        6660,
+        1680
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook GOWA": {
+      "main": [
+        [
+          {
+            "node": "Normaliser message GOWA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliser message GOWA": {
+      "main": [
+        [
+          {
+            "node": "Entrée exploitable ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message vocal ?": {
+      "main": [
+        [
+          {
+            "node": "Télécharger vocal GOWA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer accusé traitement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Télécharger vocal GOWA": {
+      "main": [
+        [
+          {
+            "node": "Préparer fichier audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer erreur audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper - Transcrire vocal": {
+      "main": [
+        [
+          {
+            "node": "Transcription valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer erreur audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer transcription": {
+      "main": [
+        [
+          {
+            "node": "Préparer accusé traitement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer Text-to-SQL": {
+      "main": [
+        [
+          {
+            "node": "GPT Text-to-SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Text-to-SQL": {
+      "main": [
+        [
+          {
+            "node": "Valider et sécuriser SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer réessai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider et sécuriser SQL": {
+      "main": [
+        [
+          {
+            "node": "SQL autorisé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL autorisé ?": {
+      "main": [
+        [
+          {
+            "node": "Validation AST SQLGlot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer refus sécurisé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL - ventes READ ONLY": {
+      "main": [
+        [
+          {
+            "node": "Collecter résultats SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer réessai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collecter résultats SQL": {
+      "main": [
+        [
+          {
+            "node": "Préparer synthèse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer synthèse": {
+      "main": [
+        [
+          {
+            "node": "GPT Synthèse manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Synthèse manager": {
+      "main": [
+        [
+          {
+            "node": "Construire réponse et graphique",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer réessai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construire réponse et graphique": {
+      "main": [
+        [
+          {
+            "node": "Envoyer réponse WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer mémoire à stocker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer réponse WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Graphique disponible ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graphique disponible ?": {
+      "main": [
+        [
+          {
+            "node": "Télécharger graphique QuickChart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer refus sécurisé": {
+      "main": [
+        [
+          {
+            "node": "Envoyer refus WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Télécharger graphique QuickChart": {
+      "main": [
+        [
+          {
+            "node": "Préparer image graphique",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer secours graphique",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer fichier audio": {
+      "main": [
+        [
+          {
+            "node": "Whisper - Transcrire vocal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcription valide ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer correction transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer erreur audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer erreur audio": {
+      "main": [
+        [
+          {
+            "node": "Envoyer erreur audio WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer image graphique": {
+      "main": [
+        [
+          {
+            "node": "Envoyer graphique WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer correction transcription": {
+      "main": [
+        [
+          {
+            "node": "GPT Corriger transcription métier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Corriger transcription métier": {
+      "main": [
+        [
+          {
+            "node": "Appliquer transcription corrigée",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer erreur audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer transcription corrigée": {
+      "main": [
+        [
+          {
+            "node": "Transcription corrigée exploitable ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcription corrigée exploitable ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer erreur audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Surveillance": {
+      "main": [
+        [
+          {
+            "node": "Paramètres surveillance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paramètres surveillance": {
+      "main": [
+        [
+          {
+            "node": "Surveillance configurée ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan ventes (RO)": {
+      "main": [
+        [
+          {
+            "node": "Évaluer seuil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Évaluer seuil": {
+      "main": [
+        [
+          {
+            "node": "Anomalie ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anomalie ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer plan invest.",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin normale sans anomalie ventes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer plan invest.": {
+      "main": [
+        [
+          {
+            "node": "GPT Plan investigation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Plan investigation": {
+      "main": [
+        [
+          {
+            "node": "Valider SQL invest.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider SQL invest.": {
+      "main": [
+        [
+          {
+            "node": "Validation AST investigation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exécuter invest. (RO)": {
+      "main": [
+        [
+          {
+            "node": "Collecter preuves",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collecter preuves": {
+      "main": [
+        [
+          {
+            "node": "Exa - contexte externe",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exa - contexte externe": {
+      "main": [
+        [
+          {
+            "node": "Assembler contexte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assembler contexte": {
+      "main": [
+        [
+          {
+            "node": "Préparer synthèse + action",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer synthèse + action": {
+      "main": [
+        [
+          {
+            "node": "GPT Synthèse + action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Synthèse + action": {
+      "main": [
+        [
+          {
+            "node": "Préparer alerte + mémoriser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer alerte + mémoriser": {
+      "main": [
+        [
+          {
+            "node": "Confiance proactive suffisante ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router confirmation": {
+      "main": [
+        [
+          {
+            "node": "Confirmation en attente ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmation en attente ?": {
+      "main": [
+        [
+          {
+            "node": "Décision comprise ?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Commande audit ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validée ?": {
+      "main": [
+        [
+          {
+            "node": "Exécuter action WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Annuler action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exécuter action WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Préparer journalisation action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer échec action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmer exécution": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Annuler action": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan stock (RO)": {
+      "main": [
+        [
+          {
+            "node": "Évaluer rupture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Évaluer rupture": {
+      "main": [
+        [
+          {
+            "node": "Rupture ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rupture ?": {
+      "main": [
+        [
+          {
+            "node": "Chercher cause fournisseur (RO)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin normale sans anomalie stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer alerte rupture": {
+      "main": [
+        [
+          {
+            "node": "Confiance rupture suffisante ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chercher cause fournisseur (RO)": {
+      "main": [
+        [
+          {
+            "node": "Préparer alerte rupture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer réessai": {
+      "main": [
+        [
+          {
+            "node": "Envoyer réessai WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrée exploitable ?": {
+      "main": [
+        [
+          {
+            "node": "Router confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer format non supporté",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer format non supporté": {
+      "main": [
+        [
+          {
+            "node": "Envoyer format non supporté WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commande démonstration ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer démo contrôlée",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message vocal ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer démo contrôlée": {
+      "main": [
+        [
+          {
+            "node": "Démo autorisée ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Démo autorisée ?": {
+      "main": [
+        [
+          {
+            "node": "Scan ventes (RO)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer refus démo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer refus démo": {
+      "main": [
+        [
+          {
+            "node": "Envoyer refus démo WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer accusé traitement": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé traitement WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer accusé traitement WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Restaurer demande après accusé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurer demande après accusé": {
+      "main": [
+        [
+          {
+            "node": "Charger mémoire Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préflight SQL PostgreSQL (RO)": {
+      "main": [
+        [
+          {
+            "node": "Restaurer requête après préflight",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer auto-correction SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurer requête après préflight": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL - ventes READ ONLY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer graphique WhatsApp": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Préparer secours graphique",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer secours graphique": {
+      "main": [
+        [
+          {
+            "node": "Envoyer secours graphique WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Décision comprise ?": {
+      "main": [
+        [
+          {
+            "node": "Validée ?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer décision à clarifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer décision à clarifier": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer échec action": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Surveillance configurée ?": {
+      "main": [
+        [
+          {
+            "node": "Scan ventes (RO)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Scan stock (RO)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin surveillance non configurée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préflight investigation PostgreSQL (RO)": {
+      "main": [
+        [
+          {
+            "node": "Restaurer requêtes après préflight investigation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurer requêtes après préflight investigation": {
+      "main": [
+        [
+          {
+            "node": "Préflight investigation valide ?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préflight investigation valide ?": {
+      "main": [
+        [
+          {
+            "node": "Exécuter invest. (RO)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer échec investigation proactive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer échec investigation proactive": {
+      "main": [
+        [
+          {
+            "node": "Envoyer alerte WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer diagnostic erreur gérée": {
+      "main": [
+        [
+          {
+            "node": "Envoyer erreur gérée administrateur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Charger mémoire Redis": {
+      "main": [
+        [
+          {
+            "node": "Appliquer mémoire conversationnelle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer mémoire conversationnelle": {
+      "main": [
+        [
+          {
+            "node": "Préparer Text-to-SQL",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer mémoire à stocker": {
+      "main": [
+        [
+          {
+            "node": "Mémoriser échange Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mémoriser échange Redis": {
+      "main": [
+        [
+          {
+            "node": "Vérifier mémorisation Redis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vérifier mémorisation Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier mémorisation Redis": {
+      "main": [
+        [
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation AST SQLGlot": {
+      "main": [
+        [
+          {
+            "node": "Appliquer verdict AST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer verdict AST": {
+      "main": [
+        [
+          {
+            "node": "SQL AST autorisé ?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL AST autorisé ?": {
+      "main": [
+        [
+          {
+            "node": "Préflight SQL PostgreSQL (RO)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer auto-correction SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer auto-correction SQL": {
+      "main": [
+        [
+          {
+            "node": "Auto-correction autorisée ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-correction autorisée ?": {
+      "main": [
+        [
+          {
+            "node": "GPT Auto-correction SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer réessai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Auto-correction SQL": {
+      "main": [
+        [
+          {
+            "node": "Appliquer SQL auto-corrigé",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer réessai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer SQL auto-corrigé": {
+      "main": [
+        [
+          {
+            "node": "Valider et sécuriser SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation AST investigation": {
+      "main": [
+        [
+          {
+            "node": "Appliquer AST investigation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer AST investigation": {
+      "main": [
+        [
+          {
+            "node": "AST investigation autorisé ?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AST investigation autorisé ?": {
+      "main": [
+        [
+          {
+            "node": "Préflight investigation PostgreSQL (RO)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer échec investigation proactive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confiance proactive suffisante ?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer alerte WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin normale confiance insuffisante",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commande audit ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer consultation audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Commande démonstration ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer consultation audit": {
+      "main": [
+        [
+          {
+            "node": "Audit autorisé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit autorisé ?": {
+      "main": [
+        [
+          {
+            "node": "Lire journal actions (AUDIT ROLE)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer refus audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire journal actions (AUDIT ROLE)": {
+      "main": [
+        [
+          {
+            "node": "Formater journal audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer erreur lecture audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater journal audit": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer refus audit": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer erreur lecture audit": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer journalisation action": {
+      "main": [
+        [
+          {
+            "node": "Journaliser action (WRITE AUDIT ONLY)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Journaliser action (WRITE AUDIT ONLY)": {
+      "main": [
+        [
+          {
+            "node": "Confirmer exécution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirmer action avec audit en échec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmer action avec audit en échec": {
+      "main": [
+        [
+          {
+            "node": "Envoyer accusé WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer diagnostic erreur gérée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confiance rupture suffisante ?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer alerte rupture WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fin normale confiance rupture insuffisante",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "92d235f9834abee3bf1973d127cab5f8ab052861c09887c509abbe0df6967cd8",
+    "plutoResilienceVersion": "6.2.1",
+    "plutoCompetitionVersion": "7.0.0",
+    "plutoVersion": "7.0.1"
+  },
+  "name": "PLUTO DB Copilot v7 - Competition Agent",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
